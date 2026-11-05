@@ -1,0 +1,186 @@
+name: StockLab validation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "stock_app.py"
+      - "stock_dashboard.py"
+      - "cophieu68_import.py"
+      - "requirements.txt"
+      - ".github/workflows/stocklab.yml"
+  workflow_dispatch:
+  schedule:
+    - cron: '30 9 * * 1-5'
+
+permissions:
+  contents: write
+
+# Serialize scheduled and push-triggered scans so their CSV commits cannot conflict.
+concurrency:
+  group: stocklab-market-scan
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Check Python syntax
+        run: python -m py_compile stock_app.py stock_dashboard.py cophieu68_import.py
+      - name: Live Cophieu68 history smoke test
+        run: |
+          python - <<'PY'
+          import pandas as pd
+          from cophieu68_import import fetch_cophieu68_history
+          df = fetch_cophieu68_history("FPT", max_pages=2)
+          required = {"symbol", "date", "open", "high", "low", "close", "volume"}
+          assert required.issubset(df.columns), df.columns.tolist()
+          assert len(df) >= 20, f"Too few history rows: {len(df)}"
+          assert df["date"].notna().all()
+          df = df.sort_values("date").copy()
+          df["EMA100"] = df["close"].ewm(span=100, adjust=False, min_periods=100).mean()
+          df["MOM10"] = df["close"] - df["close"].shift(10)
+          df["ROC14"] = (df["close"] / df["close"].shift(14) - 1) * 100
+          df["VOL20"] = df["volume"].rolling(20, min_periods=20).mean()
+          latest = df.dropna(subset=["EMA100", "MOM10", "ROC14", "VOL20"]).iloc[-1]
+          assert pd.notna(latest["EMA100"]) and pd.notna(latest["ROC14"]) and pd.notna(latest["VOL20"])
+          print(f"Cophieu68 live test OK: {len(df)} FPT rows; latest={df['date'].max()}")
+          print(f"FPT indicators: close={latest['close']:.2f}; EMA100={latest['EMA100']:.2f}; ROC14={latest['ROC14']:.2f}%; VOL20={latest['VOL20']:.0f}")
+          PY
+      - name: D1 chart pipeline smoke test
+        timeout-minutes: 5
+        run: |
+          python - <<'PY'
+          from datetime import date, timedelta
+          import pandas as pd
+          from stock_dashboard import fetch_chart_quotes, add_indicators
+
+          start = (date.today() - timedelta(days=365)).isoformat()
+          end = date.today().isoformat()
+          candles, source = fetch_chart_quotes("FPT", start, end, interval="1D")
+          assert not candles.empty, "D1 chart returned no candles"
+          required = {"date", "open", "high", "low", "close", "volume"}
+          assert required.issubset(candles.columns), candles.columns.tolist()
+          candles = candles.sort_values("date").reset_index(drop=True)
+          assert candles["date"].is_monotonic_increasing, "D1 dates are not ascending"
+          assert candles["date"].duplicated().sum() == 0, "Duplicate D1 dates"
+          assert (candles["high"] >= candles[["open", "close", "low"]].max(axis=1)).all(), "Invalid D1 high"
+          assert (candles["low"] <= candles[["open", "close", "high"]].min(axis=1)).all(), "Invalid D1 low"
+          assert len(candles) >= 100, f"Need >=100 D1 candles for EMA100, got {len(candles)}"
+          chart = add_indicators(candles)
+          latest = chart.iloc[-1]
+          for col in ("EMA20", "EMA50", "EMA100", "MOM10", "ROC14", "VOL20", "RSI14", "MACD", "MACD_SIGNAL", "MACD_HIST"):
+              assert pd.notna(latest[col]), f"Latest D1 indicator missing: {col}"
+          print(f"D1 pipeline OK: source={source}; candles={len(chart)}; latest={latest['date']}")
+          print(f"FPT D1: close={latest['close']:.2f}; EMA20={latest['EMA20']:.2f}; EMA50={latest['EMA50']:.2f}; EMA100={latest['EMA100']:.2f}; ROC14={latest['ROC14']:.2f}%; RSI14={latest['RSI14']:.1f}; volume={latest['volume']:.0f}")
+          PY
+      - name: Live Vietnam market scan via Cophieu68
+        timeout-minutes: 60
+        run: |
+          python - <<'PY'
+          from concurrent.futures import ThreadPoolExecutor, as_completed
+          import pandas as pd
+          from stock_dashboard import fetch_instruments
+          from cophieu68_import import fetch_cophieu68_history
+
+          universe = fetch_instruments()
+          print(f"Universe: {len(universe)} symbols across {universe['exchange'].nunique()} exchanges")
+          def scan(item):
+              ticker = item.symbol
+              try:
+                  hist = fetch_cophieu68_history(ticker, max_pages=2).sort_values("date")
+                  hist["EMA100"] = hist["close"].ewm(span=100, adjust=False, min_periods=100).mean()
+                  hist["MOM10"] = hist["close"] - hist["close"].shift(10)
+                  hist["ROC14"] = (hist["close"] / hist["close"].shift(14) - 1) * 100
+                  hist["VOL20"] = hist["volume"].rolling(20, min_periods=20).mean()
+                  valid = hist.dropna(subset=["EMA100", "MOM10", "ROC14", "VOL20"])
+                  if valid.empty:
+                      return None, f"{ticker}: insufficient history"
+                  row = valid.iloc[-1]
+                  return {"symbol": ticker, "exchange": item.exchange, "date": row["date"],
+                          "close": row["close"], "volume": row["volume"], "EMA100": row["EMA100"],
+                          "MOM10": row["MOM10"], "ROC14": row["ROC14"], "VOL20": row["VOL20"]}, None
+              except Exception as exc:
+                  return None, f"{ticker}: {exc}"
+
+          rows, errors = [], []
+          with ThreadPoolExecutor(max_workers=8) as pool:
+              futures = [pool.submit(scan, item) for item in universe.itertuples(index=False)]
+              for n, future in enumerate(as_completed(futures), 1):
+                  row, error = future.result()
+                  if row:
+                      rows.append(row)
+                  if error:
+                      errors.append(error)
+                  if n % 25 == 0:
+                      print(f"Progress: {n}/{len(futures)}; usable={len(rows)}; errors={len(errors)}")
+          data = pd.DataFrame(rows)
+          if data.empty:
+              raise SystemExit(f"No usable market data. Errors: {errors[:20]}")
+          passed = data[(data["VOL20"] >= 50000) & (data["close"] >= data["EMA100"])]
+          passed = passed.sort_values("ROC14", ascending=False)
+          from datetime import datetime, timezone
+          data["updated_at_utc"] = datetime.now(timezone.utc).isoformat()
+          passed["updated_at_utc"] = data["updated_at_utc"].iloc[0]
+          data.to_csv("stocklab_market_all.csv", index=False)
+          passed.to_csv("stocklab_market_passed.csv", index=False)
+          print(f"SCAN COMPLETE: scanned={len(universe)}; usable={len(data)}; errors={len(errors)}; passed={len(passed)}")
+          print("TOP 3 FILTERED:")
+          print(passed.head(3).to_string(index=False))
+          print(f"CSV files saved. Sample errors: {errors[:10]}")
+          PY
+      - name: Publish latest market scan for StockLab
+        if: success()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add stocklab_market_all.csv stocklab_market_passed.csv
+          if ! git diff --cached --quiet; then
+            git commit -m "Update daily StockLab market scan"
+            git fetch origin main
+            # A newer code commit may update the tracked CSVs while this scan runs.
+            # Keep this run's freshly generated scan outputs if those CSVs conflict.
+            if ! git rebase origin/main; then
+              git checkout --theirs -- stocklab_market_all.csv stocklab_market_passed.csv
+              git add stocklab_market_all.csv stocklab_market_passed.csv
+              GIT_EDITOR=true git rebase --continue
+            fi
+            git push origin HEAD:main
+          else
+            echo "Market scan files unchanged."
+          fi
+      - name: Check Vnstock API and sample data (optional)
+        env:
+          VNSTOCK_API_KEY: ${{ secrets.VNSTOCK_API_KEY }}
+        run: |
+          python - <<'PY'
+          from datetime import date, timedelta
+          import os
+          import vnstock
+          from vnstock import Listing, Quote
+          import pandas as pd
+
+          if not os.environ.get("VNSTOCK_API_KEY"):
+              print("Skipping live-data smoke test: VNSTOCK_API_KEY is not configured.")
+              raise SystemExit(0)
+          vnstock.login(os.environ["VNSTOCK_API_KEY"])
+          listing = pd.DataFrame(Listing(source="kbs").symbols_by_exchange())
+          assert {"symbol", "exchange"}.issubset(listing.columns), listing.columns.tolist()
+          assert listing["exchange"].astype(str).str.upper().isin(["HOSE", "HNX", "UPCOM"]).any()
+
+          end = date.today()
+          start = end - timedelta(days=30)
+          history = Quote(source="kbs", symbol="FPT").history(
+              start=start.isoformat(), end=end.isoformat(), interval="1D"
+          )
+          assert isinstance(history, pd.DataFrame) and not history.empty
+          assert {"time", "open", "high", "low", "close", "volume"}.issubset(history.columns), history.columns.tolist()
+          print(f"Vnstock smoke test OK: {len(listing)} symbols; {len(history)} FPT candles")
+          PY
