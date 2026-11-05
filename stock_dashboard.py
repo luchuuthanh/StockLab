@@ -392,9 +392,9 @@ def render_stock_dashboard():
                 p4.metric("RSI14", f"{last['RSI14']:.1f}" if pd.notna(last["RSI14"]) else "—")
                 p5.metric("Khối lượng", f"{last['volume']:,.0f}")
                 fig = make_subplots(
-                    rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.035,
-                    row_heights=[0.62, 0.18, 0.20],
-                    specs=[[{"secondary_y": False}], [{"secondary_y": False}], [{"secondary_y": False}]]
+                    rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.045,
+                    row_heights=[0.52, 0.14, 0.17, 0.17],
+                    specs=[[{"secondary_y": False}], [{"secondary_y": False}], [{"secondary_y": False}], [{"secondary_y": False}]]
                 )
                 fig.add_trace(go.Candlestick(
                     x=chart["date"], open=chart["open"], high=chart["high"],
@@ -406,21 +406,21 @@ def render_stock_dashboard():
                 fig.add_trace(go.Scatter(x=chart["date"], y=chart["RSI14"], name="RSI14"), row=3, col=1)
                 fig.add_hline(y=70, line_dash="dot", row=3, col=1)
                 fig.add_hline(y=30, line_dash="dot", row=3, col=1)
+                # MACD is the fourth panel of the same figure, sharing the trading-date axis.
+                fig.add_trace(go.Bar(x=chart["date"], y=chart["MACD_HIST"], name="MACD Histogram"), row=4, col=1)
+                fig.add_trace(go.Scatter(x=chart["date"], y=chart["MACD"], name="MACD"), row=4, col=1)
+                fig.add_trace(go.Scatter(x=chart["date"], y=chart["MACD_SIGNAL"], name="Signal"), row=4, col=1)
+                fig.add_hline(y=0, line_dash="dot", row=4, col=1)
                 fig.update_layout(
-                    title=f"{selected} · {timeframe}", height=820, template="plotly_dark", xaxis_rangeslider_visible=False,
+                    title=f"{selected} · {timeframe}", height=1120, template="plotly_dark", xaxis_rangeslider_visible=False,
                     margin=dict(l=10, r=10, t=35, b=10), legend=dict(orientation="h", y=1.02),
                     hovermode="x unified"
                 )
                 fig.update_yaxes(title_text="Giá", row=1, col=1)
                 fig.update_yaxes(title_text="KL", row=2, col=1)
                 fig.update_yaxes(title_text="RSI", range=[0, 100], row=3, col=1)
+                fig.update_yaxes(title_text="MACD", row=4, col=1)
                 st.plotly_chart(fig, use_container_width=True)
-                macd_fig = go.Figure()
-                macd_fig.add_trace(go.Bar(x=chart["date"], y=chart["MACD_HIST"], name="MACD Histogram"))
-                macd_fig.add_trace(go.Scatter(x=chart["date"], y=chart["MACD"], name="MACD"))
-                macd_fig.add_trace(go.Scatter(x=chart["date"], y=chart["MACD_SIGNAL"], name="Signal"))
-                macd_fig.update_layout(height=260, template="plotly_dark", margin=dict(l=10,r=10,t=20,b=10), hovermode="x unified")
-                st.plotly_chart(macd_fig, use_container_width=True)
                 st.dataframe(chart.tail(30).sort_values("date", ascending=False), use_container_width=True, hide_index=True)
         except Exception as exc:
             st.error(f"Không tải được biểu đồ {selected}: {exc}")
