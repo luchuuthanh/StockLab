@@ -50,10 +50,12 @@ def _normalize_quotes(payload) -> pd.DataFrame:
     if missing:
         raise MarketDataError("Thiếu trường dữ liệu OHLCV: " + ", ".join(missing))
     df = df[required].copy()
-    df["date"] = pd.to_datetime(df["date"], errors="coerce", utc=True)
-    # Vnstock may return timezone-aware Vietnam timestamps or naive timestamps.
-    if df["date"].dt.tz is not None:
-        df["date"] = df["date"].dt.tz_convert("Asia/Ho_Chi_Minh").dt.tz_localize(None)
+    parsed_dates = pd.to_datetime(df["date"], errors="coerce")
+    # Keep date-only/naive market dates as Vietnam trading dates. Convert only
+    # genuinely timezone-aware timestamps, then remove the time component.
+    if isinstance(parsed_dates.dtype, pd.DatetimeTZDtype):
+        parsed_dates = parsed_dates.dt.tz_convert("Asia/Ho_Chi_Minh").dt.tz_localize(None)
+    df["date"] = parsed_dates.dt.normalize()
     for c in ["open", "high", "low", "close", "volume"]:
         df[c] = pd.to_numeric(df[c], errors="coerce")
     return df.dropna(subset=["date", "open", "high", "low", "close"]).sort_values("date").drop_duplicates("date").reset_index(drop=True)
@@ -98,6 +100,31 @@ def fetch_chart_quotes(symbol: str, start_date: str, end_date: str, interval: st
         return fetch_daily_quotes(symbol, start_date, end_date, interval), "Vnstock VCI/KBS"
     except Exception as exc:
         raise MarketDataError(f"Cophieu68: {cp68_error}. Vnstock: {exc}") from exc
+
+def sanitize_daily_chart_bars(df: pd.DataFrame) -> tuple[pd.DataFrame, str | None]:
+    """Normalize trading dates and omit a suspicious latest one-lot flat candle."""
+    out = df.copy()
+    out["date"] = pd.to_datetime(out["date"], errors="coerce").dt.normalize()
+    out = out.dropna(subset=["date", "open", "high", "low", "close", "volume"])
+    out = out.sort_values("date").drop_duplicates("date", keep="last").reset_index(drop=True)
+    if len(out) < 21:
+        return out, None
+    latest = out.iloc[-1]
+    prior_median_volume = pd.to_numeric(out.iloc[-21:-1]["volume"], errors="coerce").median()
+    price_values = [float(latest[c]) for c in ("open", "high", "low", "close")]
+    flat_candle = max(price_values) - min(price_values) <= max(abs(float(latest["close"])) * 1e-8, 1e-8)
+    low_volume = pd.notna(prior_median_volume) and float(latest["volume"]) <= max(100.0, float(prior_median_volume) * 0.01)
+    if flat_candle and low_volume:
+        dropped_date = latest["date"].strftime("%d/%m/%Y")
+        dropped_volume = float(latest["volume"])
+        out = out.iloc[:-1].reset_index(drop=True)
+        return out, (
+            f"Tạm loại phiên {dropped_date} khỏi chỉ báo: nến đứng giá và khối lượng "
+            f"{dropped_volume:,.0f} cp thấp bất thường (≤ 1% trung vị 20 phiên trước). "
+            "Phiên này vẫn cần đối chiếu lại với nguồn dữ liệu."
+        )
+    return out, None
+
 
 def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
@@ -349,7 +376,10 @@ def render_stock_dashboard():
             start = (date.today() - timedelta(days=effective_days)).isoformat()
             raw_chart, chart_source = fetch_chart_quotes(selected, start, date.today().isoformat(), interval=timeframe)
             st.caption(f"Nguồn dữ liệu biểu đồ: {chart_source}. Bộ lọc khối lượng dùng bình quân 20 phiên.")
-            chart = add_indicators(raw_chart)
+            clean_chart, chart_warning = sanitize_daily_chart_bars(raw_chart)
+            if chart_warning:
+                st.warning(chart_warning)
+            chart = add_indicators(clean_chart)
             chart = chart.dropna(subset=["date", "open", "high", "low", "close"])
             if chart.empty:
                 st.warning("Chưa có dữ liệu OHLC hợp lệ cho mã này.")
