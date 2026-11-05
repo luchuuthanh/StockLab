@@ -201,7 +201,7 @@ def render_stock_dashboard():
     st.header("📈 STOCKLAB VIỆT NAM")
     st.caption("Bảng giá · Bộ lọc cổ phiếu · Biểu đồ nến · EMA · RSI · MACD · Khối lượng")
 
-    st.caption("Dữ liệu từ Vnstock (VCI/KBS). Có thể chạy chế độ Khách; đặt VNSTOCK_API_KEY trong Secrets để dùng hạn mức tài khoản Cộng đồng.")
+    st.caption("Nguồn dữ liệu: quét thị trường tự động từ Cophieu68; biểu đồ ngày ưu tiên Cophieu68, dữ liệu intraday dùng Vnstock VCI/KBS. Có thể chạy chế độ Khách; đặt VNSTOCK_API_KEY trong Secrets để dùng hạn mức tài khoản Cộng đồng.")
 
     left, right = st.columns([1, 1])
     with left:
