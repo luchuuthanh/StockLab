@@ -81,74 +81,93 @@ jobs:
           print(f"D1 pipeline OK: source={source}; candles={len(chart)}; latest={latest['date']}")
           print(f"FPT D1: close={latest['close']:.2f}; EMA20={latest['EMA20']:.2f}; EMA50={latest['EMA50']:.2f}; EMA100={latest['EMA100']:.2f}; ROC14={latest['ROC14']:.2f}%; RSI14={latest['RSI14']:.1f}; volume={latest['volume']:.0f}")
           PY
-      - name: Live Vietnam market scan via Cophieu68
+      - name: Scan sideways stocks (60 and 120 sessions)
         timeout-minutes: 60
         run: |
           python - <<'PY'
           from concurrent.futures import ThreadPoolExecutor, as_completed
+          from datetime import datetime, timezone
           import pandas as pd
           from stock_dashboard import fetch_instruments
           from cophieu68_import import fetch_cophieu68_history
 
           universe = fetch_instruments()
           print(f"Universe: {len(universe)} symbols across {universe['exchange'].nunique()} exchanges")
-          def scan(item):
-              ticker = item.symbol
-              try:
-                  hist = fetch_cophieu68_history(ticker, max_pages=2).sort_values("date")
-                  hist["EMA100"] = hist["close"].ewm(span=100, adjust=False, min_periods=100).mean()
-                  hist["MOM10"] = hist["close"] - hist["close"].shift(10)
-                  hist["ROC14"] = (hist["close"] / hist["close"].shift(14) - 1) * 100
-                  hist["VOL20"] = hist["volume"].rolling(20, min_periods=20).mean()
-                  valid = hist.dropna(subset=["EMA100", "MOM10", "ROC14", "VOL20"])
-                  if valid.empty:
-                      return None, f"{ticker}: insufficient history"
-                  row = valid.iloc[-1]
-                  return {"symbol": ticker, "exchange": item.exchange, "date": row["date"],
-                          "close": row["close"], "volume": row["volume"], "EMA100": row["EMA100"],
-                          "MOM10": row["MOM10"], "ROC14": row["ROC14"], "VOL20": row["VOL20"]}, None
-              except Exception as exc:
-                  return None, f"{ticker}: {exc}"
 
-          rows, errors = [], []
-          with ThreadPoolExecutor(max_workers=8) as pool:
+          def scan(item):
+              ticker = str(item.symbol).upper()
+              try:
+                  # 15 pages provide a buffer for at least 120 daily candles.
+                  hist = fetch_cophieu68_history(ticker, max_pages=15)
+                  hist = hist.sort_values("date").drop_duplicates("date").reset_index(drop=True)
+                  hist = hist.dropna(subset=["high", "low", "close"])
+                  result = {}
+                  for window, label in ((60, "60"), (120, "120")):
+                      if len(hist) < window:
+                          continue
+                      part = hist.tail(window)
+                      low = float(part["low"].min())
+                      high = float(part["high"].max())
+                      if low <= 0 or pd.isna(low) or pd.isna(high):
+                          continue
+                      amplitude = (high - low) / low * 100
+                      if amplitude <= 5.0:
+                          result[label] = {
+                              "Mã CP": ticker,
+                              "Sàn": str(item.exchange),
+                              "Giá thấp nhất": low,
+                              "Giá cao nhất": high,
+                              "Biên độ %": amplitude,
+                              "Giá hiện tại": float(hist.iloc[-1]["close"]),
+                              "Số phiên": window,
+                              "Ngày dữ liệu": pd.Timestamp(hist.iloc[-1]["date"]).strftime("%Y-%m-%d"),
+                          }
+                  return result, None
+              except Exception as exc:
+                  return {}, f"{ticker}: {exc}"
+
+          found60, found120, errors = [], [], []
+          with ThreadPoolExecutor(max_workers=12) as pool:
               futures = [pool.submit(scan, item) for item in universe.itertuples(index=False)]
               for n, future in enumerate(as_completed(futures), 1):
-                  row, error = future.result()
-                  if row:
-                      rows.append(row)
+                  result, error = future.result()
+                  if "60" in result:
+                      found60.append(result["60"])
+                  if "120" in result:
+                      found120.append(result["120"])
                   if error:
                       errors.append(error)
                   if n % 25 == 0:
-                      print(f"Progress: {n}/{len(futures)}; usable={len(rows)}; errors={len(errors)}")
-          data = pd.DataFrame(rows)
-          if data.empty:
-              raise SystemExit(f"No usable market data. Errors: {errors[:20]}")
-          passed = data[(data["VOL20"] >= 50000) & (data["close"] >= data["EMA100"])]
-          passed = passed.sort_values("ROC14", ascending=False)
-          from datetime import datetime, timezone
-          data["updated_at_utc"] = datetime.now(timezone.utc).isoformat()
-          passed["updated_at_utc"] = data["updated_at_utc"].iloc[0]
-          data.to_csv("stocklab_market_all.csv", index=False)
-          passed.to_csv("stocklab_market_passed.csv", index=False)
-          print(f"SCAN COMPLETE: scanned={len(universe)}; usable={len(data)}; errors={len(errors)}; passed={len(passed)}")
-          print("TOP 3 FILTERED:")
-          print(passed.head(3).to_string(index=False))
-          print(f"CSV files saved. Sample errors: {errors[:10]}")
+                      print(f"Progress: {n}/{len(futures)}; 60-session={len(found60)}; 120-session={len(found120)}; errors={len(errors)}")
+
+          columns = ["Mã CP", "Sàn", "Giá thấp nhất", "Giá cao nhất", "Biên độ %", "Giá hiện tại", "Số phiên", "Ngày dữ liệu"]
+          df60 = pd.DataFrame(found60, columns=columns).sort_values("Biên độ %") if found60 else pd.DataFrame(columns=columns)
+          df120 = pd.DataFrame(found120, columns=columns).sort_values("Biên độ %") if found120 else pd.DataFrame(columns=columns)
+          stamp = datetime.now(timezone.utc).isoformat()
+          df60["updated_at_utc"] = stamp
+          df120["updated_at_utc"] = stamp
+          df60.to_csv("stocklab_sideways_60.csv", index=False)
+          df120.to_csv("stocklab_sideways_120.csv", index=False)
+          print(f"SIDEWAYS SCAN COMPLETE: scanned={len(universe)}; 60-session={len(df60)}; 120-session={len(df120)}; errors={len(errors)}")
+          print("60-SESSION RESULTS:")
+          print(df60.to_string(index=False))
+          print("120-SESSION RESULTS:")
+          print(df120.to_string(index=False))
+          print("SAMPLE ERRORS:", errors[:15])
           PY
       - name: Publish latest market scan for StockLab
         if: success()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add stocklab_market_all.csv stocklab_market_passed.csv
+          git add stocklab_market_all.csv stocklab_market_passed.csv stocklab_sideways_60.csv stocklab_sideways_120.csv
           if ! git diff --cached --quiet; then
             git commit -m "Update daily StockLab market scan"
             git fetch origin main
             # A newer code commit may update the tracked CSVs while this scan runs.
             # Keep this run's freshly generated scan outputs if those CSVs conflict.
             if ! git rebase origin/main; then
-              git checkout --theirs -- stocklab_market_all.csv stocklab_market_passed.csv
+              git checkout --theirs -- stocklab_market_all.csv stocklab_market_passed.csv stocklab_sideways_60.csv stocklab_sideways_120.csv
               git add stocklab_market_all.csv stocklab_market_passed.csv
               GIT_EDITOR=true git rebase --continue
             fi
