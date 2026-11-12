@@ -1,6 +1,14 @@
 name: StockLab validation
 
 on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "stock_app.py"
+      - "stock_dashboard.py"
+      - "cophieu68_import.py"
+      - "requirements.txt"
+      - ".github/workflows/stocklab.yml"
   push:
     branches: [main]
     paths:
