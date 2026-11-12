@@ -46,7 +46,6 @@ jobs:
       - name: Check Python syntax
         run: python -m py_compile stock_app.py stock_dashboard.py cophieu68_import.py
       - name: Live Cophieu68 history smoke test
-        if: github.event_name != 'pull_request'
         run: |
           python - <<'PY'
           import pandas as pd
@@ -67,7 +66,6 @@ jobs:
           print(f"FPT indicators: close={latest['close']:.2f}; EMA100={latest['EMA100']:.2f}; ROC14={latest['ROC14']:.2f}%; VOL20={latest['VOL20']:.0f}")
           PY
       - name: D1 chart pipeline smoke test
-        if: github.event_name != 'pull_request'
         timeout-minutes: 5
         run: |
           python - <<'PY'
@@ -244,7 +242,6 @@ jobs:
             echo "Market scan files unchanged."
           fi
       - name: Check Vnstock API and sample data (optional)
-        if: github.event_name != 'pull_request'
         env:
           VNSTOCK_API_KEY: ${{ secrets.VNSTOCK_API_KEY }}
         run: |
