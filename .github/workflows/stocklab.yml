@@ -53,7 +53,11 @@ jobs:
         run: |
           python - <<'PY'
           import pandas as pd
-          from cophieu68_import import fetch_cophieu68_history
+          from cophieu68_import import fetch_cophieu68_history, fetch_cophieu68_listing
+          listing = fetch_cophieu68_listing()
+          assert not listing.empty, "Cophieu68 listing returned no symbols"
+          assert {"symbol", "exchange"}.issubset(listing.columns), listing.columns.tolist()
+          assert listing["exchange"].astype(str).str.upper().isin(["HOSE", "HNX", "UPCOM"]).all()
           df = fetch_cophieu68_history("FPT", max_pages=2)
           required = {"symbol", "date", "open", "high", "low", "close", "volume"}
           assert required.issubset(df.columns), df.columns.tolist()
@@ -66,6 +70,7 @@ jobs:
           df["VOL20"] = df["volume"].rolling(20, min_periods=20).mean()
           latest = df.dropna(subset=["EMA100", "MOM10", "ROC14", "VOL20"]).iloc[-1]
           assert pd.notna(latest["EMA100"]) and pd.notna(latest["ROC14"]) and pd.notna(latest["VOL20"])
+          print(f"Cophieu68 listing OK: {len(listing)} symbols; exchanges={sorted(listing['exchange'].astype(str).str.upper().unique())}")
           print(f"Cophieu68 live test OK: {len(df)} FPT rows; latest={df['date'].max()}")
           print(f"FPT indicators: close={latest['close']:.2f}; EMA100={latest['EMA100']:.2f}; ROC14={latest['ROC14']:.2f}%; VOL20={latest['VOL20']:.0f}")
           PY
