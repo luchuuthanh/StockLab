@@ -222,7 +222,7 @@ jobs:
             # Keep this run's freshly generated scan outputs if those CSVs conflict.
             if ! git rebase origin/main; then
               git checkout --theirs -- stocklab_market_all.csv stocklab_market_passed.csv stocklab_market_history.csv stocklab_sideways_60.csv stocklab_sideways_120.csv
-              git add stocklab_market_all.csv stocklab_market_passed.csv
+              git add stocklab_market_all.csv stocklab_market_passed.csv stocklab_market_history.csv stocklab_sideways_60.csv stocklab_sideways_120.csv
               GIT_EDITOR=true git rebase --continue
             fi
             git push origin HEAD:main
