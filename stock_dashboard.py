@@ -473,39 +473,75 @@ def render_stock_dashboard():
             try:
                 gh = pd.read_csv(growth_path)
                 gh["date"] = pd.to_datetime(gh["date"], errors="coerce")
-                for col in ("close", "EMA7", "SMA20", "EMA100", "MOM10", "VOL20"): gh[col] = pd.to_numeric(gh[col], errors="coerce")
+                for col in ("close", "EMA7", "SMA20"):
+                    gh[col] = pd.to_numeric(gh[col], errors="coerce")
                 gh = gh.dropna(subset=["date", "symbol", "close", "EMA7", "SMA20"]).sort_values(["symbol", "date"]).drop_duplicates(["symbol", "date"], keep="last")
-                records = []
+                market_dates = sorted(gh["date"].dropna().unique())
+                market_date_set = set(market_dates)
+                records, completed = [], []
                 for symbol, part in gh.groupby("symbol", sort=True):
-                    part = part.reset_index(drop=True); active = False; count = 0; start = None
-                    for i, row in part.iterrows():
-                        found = bool(row.get("found_mom10", False)) and row["MOM10"] >= mom10_floor and row["VOL20"] >= min_volume and (not require_ema or row["close"] >= row["EMA100"])
-                        if not found:
-                            active = False; count = 0; start = None
-                            continue
+                    part = part.sort_values("date").reset_index(drop=True)
+                    active, count, start_date, previous_date = False, 0, None, None
+                    for _, row in part.iterrows():
+                        day = row["date"]
+                        # Missing a market session for this ticker breaks the sequence; never bridge missing data.
+                        if previous_date is not None:
+                            missing = [d for d in market_dates if previous_date < d < day and d not in set(part["date"])]
+                            if missing:
+                                if active:
+                                    completed.append({"Mã": symbol, "Ngày bắt đầu": start_date, "Ngày kết thúc": previous_date, "Số ngày": count})
+                                active, count, start_date = False, 0, None
+                        below_both = row["close"] < row["EMA7"] and row["close"] < row["SMA20"]
                         if not active:
-                            prior_ok = i > 0 and part.iloc[i-1]["close"] > part.iloc[i-1]["EMA7"] and part.iloc[i-1]["close"] > part.iloc[i-1]["SMA20"]
-                            if not prior_ok: continue
-                            active = True; count = 2; start = row["date"]
-                        else: count += 1
-                        records.append({"Mã": symbol, "Ngày xác nhận": row["date"], "Ngày bắt đầu chuỗi": start, "Số ngày xác nhận": count-1, "Ngày tăng trưởng": count, "Giá đóng cửa": row["close"], "EMA7": row["EMA7"], "SMA20": row["SMA20"]})
-                daily = pd.DataFrame(records)
-                if daily.empty: st.info("Chưa có chuỗi xác nhận hợp lệ. Cần phiên trước đó đóng cửa trên cả EMA7 và SMA20, sau đó cổ phiếu được tìm thấy trong bảng MOM10.")
+                            if below_both:
+                                active, count, start_date = True, 1, day
+                                records.append({"Mã": symbol, "Ngày": day, "Sự kiện": "Bắt đầu · Ngày 1", "Số ngày": count, "Đóng cửa": row["close"], "EMA7": row["EMA7"], "SMA20": row["SMA20"]})
+                        elif below_both:
+                            completed.append({"Mã": symbol, "Ngày bắt đầu": start_date, "Ngày kết thúc": previous_date, "Số ngày": count})
+                            active, count, start_date = False, 0, None
+                        else:
+                            count += 1
+                            records.append({"Mã": symbol, "Ngày": day, "Sự kiện": "Tiếp tục", "Số ngày": count, "Đóng cửa": row["close"], "EMA7": row["EMA7"], "SMA20": row["SMA20"]})
+                        previous_date = day
+                    if active:
+                        completed.append({"Mã": symbol, "Ngày bắt đầu": start_date, "Ngày kết thúc": previous_date, "Số ngày": count})
+                detail = pd.DataFrame(records)
+                active_detail = detail[detail["Ngày"] == detail["Ngày"].max()].copy() if not detail.empty else pd.DataFrame()
+                # Current active sequences are those whose last recorded event is not a stop event.
+                latest_rows = []
+                for symbol, part in gh.groupby("symbol", sort=True):
+                    part = part.sort_values("date")
+                    last = part.iloc[-1]
+                    below = last["close"] < last["EMA7"] and last["close"] < last["SMA20"]
+                    if below:
+                        continue
+                    seq = detail[detail["Mã"] == symbol]
+                    if not seq.empty:
+                        latest_rows.append(seq.iloc[-1].to_dict())
+                current = pd.DataFrame(latest_rows)
+                if current.empty:
+                    st.info("Chưa có chuỗi tăng trưởng đang hoạt động.")
                 else:
-                    latest_date = daily["Ngày xác nhận"].max()
-                    current = daily[daily["Ngày xác nhận"] == latest_date].sort_values(["Ngày tăng trưởng", "Mã"], ascending=[False, True])
+                    counts = pd.to_numeric(current["Số ngày"], errors="coerce")
                     a,b,c,d,e,f = st.columns(6)
-                    a.metric("Đang xác nhận", f"{current['Mã'].nunique():,}")
-                    b.metric("Từ 3 ngày", f"{(current['Ngày tăng trưởng'] >= 3).sum():,}")
-                    c.metric("Từ 5 ngày", f"{(current['Ngày tăng trưởng'] >= 5).sum():,}")
-                    d.metric("Từ 7 ngày", f"{(current['Ngày tăng trưởng'] >= 7).sum():,}")
-                    e.metric("Từ 9 ngày", f"{(current['Ngày tăng trưởng'] >= 9).sum():,}")
-                    f.metric("Trên 10 ngày", f"{(current['Ngày tăng trưởng'] > 10).sum():,}")
-                    st.caption("Ngày 1 là phiên trước đó đã đóng cửa trên cả EMA7 và SMA20. Ngày hệ thống xác nhận lần đầu là Ngày 2. Mỗi ngày được tìm thấy trong bảng MOM10 đều lưu một dòng; khi vắng khỏi bảng dò tìm, chuỗi kết thúc.")
-                    st.dataframe(current, use_container_width=True, hide_index=True)
-                    st.subheader("Lịch sử xác nhận từng ngày")
-                    st.dataframe(daily.sort_values(["Mã", "Ngày xác nhận"]), use_container_width=True, hide_index=True)
-            except Exception as exc: st.error(f"Không thể tính bộ đếm tăng trưởng: {exc}")
+                    a.metric("Đang hoạt động", f"{len(current):,}")
+                    b.metric("Từ 3 ngày", f"{(counts >= 3).sum():,}")
+                    c.metric("Từ 5 ngày", f"{(counts >= 5).sum():,}")
+                    d.metric("Từ 7 ngày", f"{(counts >= 7).sum():,}")
+                    e.metric("Từ 9 ngày", f"{(counts >= 9).sum():,}")
+                    f.metric("Trên 10 ngày", f"{(counts > 10).sum():,}")
+                    st.caption("Ngày 1: giá đóng cửa thấp hơn đồng thời EMA7 và SMA20. Từ ngày 2: tiếp tục đếm nếu giá đóng cửa không thấp hơn đồng thời cả hai đường. Dừng tại phiên đóng cửa thấp hơn cả EMA7 và SMA20; phiên dừng không được tính vào chuỗi cũ.")
+                    st.dataframe(current.sort_values(["Số ngày", "Mã"], ascending=[False, True]), use_container_width=True, hide_index=True)
+                st.subheader("Lịch sử từng phiên")
+                if not detail.empty:
+                    st.dataframe(detail.sort_values(["Mã", "Ngày"]), use_container_width=True, hide_index=True)
+                st.subheader("Các chuỗi đã kết thúc và đang chạy")
+                if completed:
+                    st.dataframe(pd.DataFrame(completed).sort_values(["Mã", "Ngày bắt đầu"]), use_container_width=True, hide_index=True)
+                else:
+                    st.info("Chưa có chuỗi nào kết thúc.")
+            except Exception as exc:
+                st.error(f"Không thể tính bộ đếm tăng trưởng: {exc}")
 
     with tab_all:
         st.subheader("Bảng dữ liệu toàn thị trường")
