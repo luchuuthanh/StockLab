@@ -512,6 +512,9 @@ def render_stock_dashboard():
                 for symbol, part in gh.groupby("symbol", sort=True):
                     part = part.sort_values("date")
                     last = part.iloc[-1]
+                    # Only show a live counter when this ticker has data for the latest market session.
+                    if last["date"] != market_dates[-1]:
+                        continue
                     below = last["close"] < last["EMA7"] and last["close"] < last["SMA20"]
                     if below:
                         continue
