@@ -471,115 +471,50 @@ def render_stock_dashboard():
             st.info("Chưa có lịch sử theo ngày. Bộ đếm sẽ có dữ liệu sau khi workflow quét và lưu phiên giao dịch.")
         else:
             try:
-                gh = pd.read_csv(growth_path)
-                required = {"date", "symbol", "close", "EMA7", "SMA20"}
-                missing_cols = required - set(gh.columns)
-                if missing_cols:
-                    raise ValueError("Thiếu cột lịch sử: " + ", ".join(sorted(missing_cols)))
-                gh["date"] = pd.to_datetime(gh["date"], errors="coerce").dt.normalize()
-                for col in ("close", "EMA7", "SMA20"):
-                    gh[col] = pd.to_numeric(gh[col], errors="coerce")
-                gh["symbol"] = gh["symbol"].astype(str).str.upper().str.strip()
-                gh = gh.dropna(subset=["date", "symbol", "close", "EMA7", "SMA20"])
-                gh = gh[gh["symbol"].ne("")].sort_values(["symbol", "date"])
-                gh = gh.drop_duplicates(["symbol", "date"], keep="last")
-                if gh.empty:
-                    st.info("Chưa có dòng lịch sử hợp lệ để tính bộ đếm.")
-                else:
-                    market_dates = sorted(gh["date"].unique())
-                    latest_market_date = market_dates[-1]
-                    records, completed, interrupted, current_rows = [], [], [], []
-                    for symbol, part in gh.groupby("symbol", sort=True):
-                        part = part.sort_values("date").reset_index(drop=True)
-                        ticker_dates = set(part["date"])
-                        active, count, start_date, previous_date = False, 0, None, None
-                        last_event = None
-                        for _, row in part.iterrows():
-                            day = row["date"]
-                            if previous_date is not None:
-                                has_gap = any(previous_date < market_day < day and market_day not in ticker_dates
-                                              for market_day in market_dates)
-                                if has_gap and active:
-                                    interrupted.append({
-                                        "Mã": symbol, "Ngày bắt đầu": start_date,
-                                        "Ngày dữ liệu cuối": previous_date, "Số ngày": count,
-                                        "Trạng thái": "Gián đoạn · thiếu phiên dữ liệu"
-                                    })
-                                    active, count, start_date = False, 0, None
-                            below_both = row["close"] < row["EMA7"] and row["close"] < row["SMA20"]
-                            if not active:
-                                if below_both:
-                                    active, count, start_date = True, 1, day
-                                    last_event = {"Mã": symbol, "Ngày": day, "Sự kiện": "Bắt đầu · Ngày 1",
-                                                  "Số ngày": count, "Đóng cửa": row["close"],
-                                                  "EMA7": row["EMA7"], "SMA20": row["SMA20"]}
-                                    records.append(last_event)
-                            elif below_both:
-                                completed.append({
-                                    "Mã": symbol, "Ngày bắt đầu": start_date,
-                                    "Ngày kết thúc": previous_date, "Số ngày": count,
-                                    "Trạng thái": "Đã kết thúc · đóng cửa dưới cả EMA7 và SMA20"
-                                })
-                                active, count, start_date = False, 0, None
-                                last_event = None
-                            else:
-                                count += 1
-                                last_event = {"Mã": symbol, "Ngày": day, "Sự kiện": "Tiếp tục",
-                                              "Số ngày": count, "Đóng cửa": row["close"],
-                                              "EMA7": row["EMA7"], "SMA20": row["SMA20"]}
-                                records.append(last_event)
-                            previous_date = day
-                        # An active sequence is current only if the ticker has data on the latest market date.
-                        # Otherwise its state is unknown; do not present it as live or as completed.
-                        if active and previous_date == latest_market_date:
-                            current_rows.append({
-                                "Mã": symbol, "Ngày bắt đầu": start_date,
-                                "Ngày cập nhật": previous_date, "Số ngày": count
-                            })
-                        elif active:
-                            interrupted.append({
-                                "Mã": symbol, "Ngày bắt đầu": start_date,
-                                "Ngày dữ liệu cuối": previous_date, "Số ngày": count,
-                                "Trạng thái": "Chưa xác nhận · mã thiếu phiên mới nhất"
-                            })
+                from growth_counter import calculate_growth_sequences
 
-                    current = pd.DataFrame(current_rows)
-                    detail = pd.DataFrame(records)
-                    st.caption(
-                        "Quy tắc: Ngày 1 phải có giá đóng cửa thấp hơn đồng thời EMA7 và SMA20. "
-                        "Từ ngày 2, tiếp tục đếm nếu giá không thấp hơn đồng thời cả hai đường "
-                        "(đạt ít nhất một trong hai). Khi đóng cửa thấp hơn cả hai, chuỗi cũ dừng "
-                        "và phiên dừng không được tính. Thiếu phiên dữ liệu thì đánh dấu gián đoạn, "
-                        "không tự nối chuỗi."
-                    )
-                    if current.empty:
-                        st.info("Không có chuỗi nào được xác nhận đang hoạt động ở phiên dữ liệu mới nhất.")
-                    else:
-                        counts = pd.to_numeric(current["Số ngày"], errors="coerce")
-                        a, b, c, d, e, f = st.columns(6)
-                        a.metric("Đang hoạt động", f"{len(current):,}")
-                        b.metric("Từ 3 ngày", f"{(counts >= 3).sum():,}")
-                        c.metric("Từ 5 ngày", f"{(counts >= 5).sum():,}")
-                        d.metric("Từ 7 ngày", f"{(counts >= 7).sum():,}")
-                        e.metric("Từ 9 ngày", f"{(counts >= 9).sum():,}")
-                        f.metric("Trên 10 ngày", f"{(counts > 10).sum():,}")
-                        st.dataframe(current.sort_values(["Số ngày", "Mã"], ascending=[False, True]),
-                                     use_container_width=True, hide_index=True)
-                    st.subheader("Lịch sử từng phiên")
-                    if not detail.empty:
-                        st.dataframe(detail.sort_values(["Mã", "Ngày"]), use_container_width=True, hide_index=True)
-                    st.subheader("Chuỗi đã kết thúc")
-                    if completed:
-                        st.dataframe(pd.DataFrame(completed).sort_values(["Mã", "Ngày bắt đầu"]),
-                                     use_container_width=True, hide_index=True)
-                    else:
-                        st.info("Chưa có chuỗi nào kết thúc.")
-                    st.subheader("Chuỗi gián đoạn hoặc chưa xác nhận")
-                    if interrupted:
-                        st.dataframe(pd.DataFrame(interrupted).sort_values(["Mã", "Ngày bắt đầu"]),
-                                     use_container_width=True, hide_index=True)
-                    else:
-                        st.caption("Không có chuỗi nào bị gián đoạn dữ liệu.")
+                sequences = calculate_growth_sequences(pd.read_csv(growth_path))
+                current = pd.DataFrame(sequences["current"])
+                detail = pd.DataFrame(sequences["detail"])
+                completed = sequences["completed"]
+                interrupted = sequences["interrupted"]
+
+                st.caption(
+                    "Quy tắc: Ngày 1 phải có giá đóng cửa thấp hơn đồng thời EMA7 và SMA20. "
+                    "Từ ngày 2, tiếp tục đếm nếu giá không thấp hơn đồng thời cả hai đường "
+                    "(đạt ít nhất một trong hai). Khi đóng cửa thấp hơn cả hai, chuỗi cũ dừng "
+                    "và phiên dừng không được tính. Thiếu phiên dữ liệu thì đánh dấu gián đoạn, "
+                    "không tự nối chuỗi."
+                )
+                if current.empty:
+                    st.info("Không có chuỗi nào được xác nhận đang hoạt động ở phiên dữ liệu mới nhất.")
+                else:
+                    counts = pd.to_numeric(current["Số ngày"], errors="coerce")
+                    a, b, c, d, e, f = st.columns(6)
+                    a.metric("Đang hoạt động", f"{len(current):,}")
+                    b.metric("Từ 3 ngày", f"{(counts >= 3).sum():,}")
+                    c.metric("Từ 5 ngày", f"{(counts >= 5).sum():,}")
+                    d.metric("Từ 7 ngày", f"{(counts >= 7).sum():,}")
+                    e.metric("Từ 9 ngày", f"{(counts >= 9).sum():,}")
+                    f.metric("Trên 10 ngày", f"{(counts > 10).sum():,}")
+                    st.dataframe(current.sort_values(["Số ngày", "Mã"], ascending=[False, True]),
+                                 use_container_width=True, hide_index=True)
+                st.subheader("Lịch sử từng phiên")
+                if not detail.empty:
+                    st.dataframe(detail.sort_values(["Mã", "Ngày"]), use_container_width=True, hide_index=True)
+                st.subheader("Chuỗi đã kết thúc")
+                if completed:
+                    st.dataframe(pd.DataFrame(completed).sort_values(["Mã", "Ngày bắt đầu"]),
+                                 use_container_width=True, hide_index=True)
+                else:
+                    st.info("Chưa có chuỗi nào kết thúc.")
+                st.subheader("Chuỗi gián đoạn hoặc chưa xác nhận")
+                if interrupted:
+                    st.dataframe(pd.DataFrame(interrupted).sort_values(["Mã", "Ngày bắt đầu"]),
+                                 use_container_width=True, hide_index=True)
+                else:
+                    st.caption("Không có chuỗi nào bị gián đoạn dữ liệu.")
+
             except Exception as exc:
                 st.error(f"Không thể tính bộ đếm tăng trưởng: {exc}")
 
