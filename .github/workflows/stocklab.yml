@@ -18,6 +18,7 @@ on:
       - "stock_app.py"
       - "stock_dashboard.py"
       - "growth_counter.py"
+      - "tests/**"
       - "cophieu68_import.py"
       - "requirements.txt"
       - ".github/workflows/stocklab.yml"
