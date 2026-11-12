@@ -6,6 +6,8 @@ on:
     paths:
       - "stock_app.py"
       - "stock_dashboard.py"
+      - "growth_counter.py"
+      - "stocklab_market_history.csv"
       - "cophieu68_import.py"
       - "requirements.txt"
       - ".github/workflows/stocklab.yml"
@@ -44,6 +46,7 @@ jobs:
       - name: Check Python syntax
         run: python -m py_compile stock_app.py stock_dashboard.py cophieu68_import.py
       - name: Live Cophieu68 history smoke test
+        if: github.event_name != 'pull_request'
         run: |
           python - <<'PY'
           import pandas as pd
@@ -64,6 +67,7 @@ jobs:
           print(f"FPT indicators: close={latest['close']:.2f}; EMA100={latest['EMA100']:.2f}; ROC14={latest['ROC14']:.2f}%; VOL20={latest['VOL20']:.0f}")
           PY
       - name: D1 chart pipeline smoke test
+        if: github.event_name != 'pull_request'
         timeout-minutes: 5
         run: |
           python - <<'PY'
@@ -91,6 +95,7 @@ jobs:
           print(f"FPT D1: close={latest['close']:.2f}; EMA20={latest['EMA20']:.2f}; EMA50={latest['EMA50']:.2f}; EMA100={latest['EMA100']:.2f}; ROC14={latest['ROC14']:.2f}%; RSI14={latest['RSI14']:.1f}; volume={latest['volume']:.0f}")
           PY
       - name: Scan daily market and persist dated snapshots
+        if: github.event_name != 'pull_request'
         timeout-minutes: 90
         run: |
           python - <<'PY'
@@ -144,6 +149,7 @@ jobs:
           print("Sample errors:", errors[:20])
           PY
       - name: Scan sideways stocks (60 and 120 sessions)
+        if: github.event_name != 'pull_request'
         timeout-minutes: 60
         run: |
           python - <<'PY'
@@ -218,7 +224,7 @@ jobs:
           print("SAMPLE ERRORS:", errors[:15])
           PY
       - name: Publish latest market scan for StockLab
-        if: success()
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && success()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -238,6 +244,7 @@ jobs:
             echo "Market scan files unchanged."
           fi
       - name: Check Vnstock API and sample data (optional)
+        if: github.event_name != 'pull_request'
         env:
           VNSTOCK_API_KEY: ${{ secrets.VNSTOCK_API_KEY }}
         run: |
