@@ -6,6 +6,7 @@ on:
     paths:
       - "stock_app.py"
       - "stock_dashboard.py"
+      - "growth_counter.py"
       - "cophieu68_import.py"
       - "requirements.txt"
       - ".github/workflows/stocklab.yml"
@@ -80,6 +81,59 @@ jobs:
               assert pd.notna(latest[col]), f"Latest D1 indicator missing: {col}"
           print(f"D1 pipeline OK: source={source}; candles={len(chart)}; latest={latest['date']}")
           print(f"FPT D1: close={latest['close']:.2f}; EMA20={latest['EMA20']:.2f}; EMA50={latest['EMA50']:.2f}; EMA100={latest['EMA100']:.2f}; ROC14={latest['ROC14']:.2f}%; RSI14={latest['RSI14']:.1f}; volume={latest['volume']:.0f}")
+          PY
+      - name: Scan daily market and persist dated snapshots
+        timeout-minutes: 90
+        run: |
+          python - <<'PY'
+          from concurrent.futures import ThreadPoolExecutor, as_completed
+          from datetime import datetime, timezone
+          from pathlib import Path
+          import pandas as pd
+          from stock_dashboard import fetch_instruments
+          from cophieu68_import import fetch_cophieu68_history
+          universe = fetch_instruments()
+          stamp = datetime.now(timezone.utc).isoformat()
+          def scan(item):
+              symbol = str(item.symbol).upper()
+              try:
+                  hist = fetch_cophieu68_history(symbol, max_pages=15).sort_values("date").drop_duplicates("date")
+                  hist = hist.dropna(subset=["close", "volume"])
+                  if len(hist) < 100: raise ValueError(f"Thiếu lịch sử: {len(hist)} phiên")
+                  close = pd.to_numeric(hist["close"], errors="coerce")
+                  hist["EMA7"] = close.ewm(span=7, adjust=False, min_periods=7).mean()
+                  hist["SMA20"] = close.rolling(20, min_periods=20).mean()
+                  hist["EMA100"] = close.ewm(span=100, adjust=False, min_periods=100).mean()
+                  hist["MOM10"] = close - close.shift(10)
+                  hist["ROC14"] = (close / close.shift(14) - 1) * 100
+                  hist["VOL20"] = hist["volume"].rolling(20, min_periods=20).mean()
+                  valid = hist.dropna(subset=["EMA7", "SMA20", "EMA100", "MOM10", "ROC14", "VOL20"]).copy()
+                  if valid.empty: raise ValueError("Không đủ dữ liệu chỉ báo")
+                  valid["symbol"] = symbol; valid["exchange"] = str(item.exchange).upper(); valid["updated_at_utc"] = stamp
+                  valid["found_mom10"] = (valid["MOM10"] >= 4) & (valid["VOL20"] >= 50000) & (valid["close"] >= valid["EMA100"])
+                  valid["above_both"] = (valid["close"] > valid["EMA7"]) & (valid["close"] > valid["SMA20"])
+                  return valid[["symbol","exchange","date","close","volume","EMA7","SMA20","EMA100","MOM10","ROC14","VOL20","found_mom10","above_both","updated_at_utc"]], None
+              except Exception as exc: return None, f"{symbol}: {exc}"
+          frames, errors = [], []
+          with ThreadPoolExecutor(max_workers=12) as pool:
+              futures = [pool.submit(scan, item) for item in universe.itertuples(index=False)]
+              for i, future in enumerate(as_completed(futures), 1):
+                  frame, error = future.result()
+                  if frame is not None: frames.append(frame)
+                  if error: errors.append(error)
+                  if i % 50 == 0: print(f"Market scan {i}/{len(futures)}; valid={len(frames)}; errors={len(errors)}")
+          if not frames: raise RuntimeError("Không có mã nào quét được; không ghi đè lịch sử")
+          all_history = pd.concat(frames, ignore_index=True)
+          all_history["date"] = pd.to_datetime(all_history["date"], errors="coerce").dt.strftime("%Y-%m-%d")
+          history_path = Path("stocklab_market_history.csv")
+          if history_path.exists(): all_history = pd.concat([pd.read_csv(history_path), all_history], ignore_index=True)
+          all_history = all_history.drop_duplicates(["symbol","date"], keep="last").sort_values(["date","symbol"])
+          all_history.to_csv(history_path, index=False)
+          latest_date = all_history["date"].max(); latest = all_history[all_history["date"] == latest_date].copy()
+          latest.to_csv("stocklab_market_all.csv", index=False)
+          latest[latest["found_mom10"].astype(str).str.lower().isin(["true","1"])].to_csv("stocklab_market_passed.csv", index=False)
+          print(f"DAILY MARKET SCAN COMPLETE: universe={len(universe)}; latest={latest_date}; rows={len(latest)}; history={len(all_history)}; errors={len(errors)}")
+          print("Sample errors:", errors[:20])
           PY
       - name: Scan sideways stocks (60 and 120 sessions)
         timeout-minutes: 60
@@ -160,14 +214,14 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add stocklab_market_all.csv stocklab_market_passed.csv stocklab_sideways_60.csv stocklab_sideways_120.csv
+          git add stocklab_market_all.csv stocklab_market_passed.csv stocklab_market_history.csv stocklab_sideways_60.csv stocklab_sideways_120.csv
           if ! git diff --cached --quiet; then
             git commit -m "Update daily StockLab market scan"
             git fetch origin main
             # A newer code commit may update the tracked CSVs while this scan runs.
             # Keep this run's freshly generated scan outputs if those CSVs conflict.
             if ! git rebase origin/main; then
-              git checkout --theirs -- stocklab_market_all.csv stocklab_market_passed.csv stocklab_sideways_60.csv stocklab_sideways_120.csv
+              git checkout --theirs -- stocklab_market_all.csv stocklab_market_passed.csv stocklab_market_history.csv stocklab_sideways_60.csv stocklab_sideways_120.csv
               git add stocklab_market_all.csv stocklab_market_passed.csv
               GIT_EDITOR=true git rebase --continue
             fi
