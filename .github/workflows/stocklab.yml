@@ -7,6 +7,7 @@ on:
       - "stock_app.py"
       - "stock_dashboard.py"
       - "growth_counter.py"
+      - "tests/**"
       - "stocklab_market_history.csv"
       - "cophieu68_import.py"
       - "requirements.txt"
@@ -44,7 +45,9 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
       - name: Check Python syntax
-        run: python -m py_compile stock_app.py stock_dashboard.py cophieu68_import.py
+        run: python -m py_compile stock_app.py stock_dashboard.py cophieu68_import.py growth_counter.py
+      - name: Test EMA7 + SMA20 growth counter
+        run: python -m unittest discover -s tests -v
       - name: Live Cophieu68 history smoke test
         run: |
           python - <<'PY'
