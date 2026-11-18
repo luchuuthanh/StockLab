@@ -333,13 +333,32 @@ def render_stock_dashboard():
             with st.expander(f"Lỗi dữ liệu trong các lượt quét ({len(stats['errors'])})"):
                 st.write(stats["errors"][-50:])
 
-    tab_scan, tab_chart, tab_all = st.tabs(["🔎 Bộ lọc cổ phiếu", "📊 Biểu đồ kỹ thuật", "📋 Toàn bộ thị trường"])
+    tab_scan, tab_chart, tab_all, tab_growth = st.tabs(["🔎 Bộ lọc cổ phiếu", "📊 Biểu đồ kỹ thuật", "📋 Toàn bộ thị trường", "📈 BỘ ĐẾM TĂNG TRƯỞNG"])
     with tab_scan:
         mom_tab, roc_tab = st.tabs(["MOM10 ≥ ngưỡng", "ROC14 ≥ ngưỡng"])
         with mom_tab:
             st.subheader("Danh sách MOM10 độc lập · FireAnt Length 10, Close")
             st.caption("Không yêu cầu ROC14 đạt ngưỡng. Vẫn áp dụng khối lượng tối thiểu và EMA100 nếu bật.")
             st.metric("Số mã đạt MOM10", f"{len(filtered_mom10):,}")
+            history_path = __import__("pathlib").Path(__file__).resolve().parent / "stocklab_market_history.csv"
+            if history_path.exists():
+                try:
+                    hist_day = pd.read_csv(history_path)
+                    hist_day["date"] = pd.to_datetime(hist_day["date"], errors="coerce")
+                    available_dates = sorted(hist_day["date"].dropna().dt.date.unique(), reverse=True)
+                    if available_dates:
+                        chosen = st.date_input("Chọn ngày lọc MOM10", value=available_dates[0], min_value=available_dates[-1], max_value=available_dates[0], key="mom10_history_date")
+                        day_rows = hist_day[hist_day["date"].dt.date == chosen].copy()
+                        day_rows["MOM10"] = pd.to_numeric(day_rows["MOM10"], errors="coerce")
+                        day_rows["VOL20"] = pd.to_numeric(day_rows["VOL20"], errors="coerce")
+                        day_rows["close"] = pd.to_numeric(day_rows["close"], errors="coerce")
+                        day_rows["EMA100"] = pd.to_numeric(day_rows["EMA100"], errors="coerce")
+                        day_rows = day_rows[(day_rows["MOM10"] >= mom10_floor) & (day_rows["VOL20"] >= min_volume)]
+                        if require_ema: day_rows = day_rows[day_rows["close"] >= day_rows["EMA100"]]
+                        st.caption(f"Kết quả lọc đã lưu ngày {chosen:%d/%m/%Y}; không tính lại bằng dữ liệu hiện tại.")
+                        st.dataframe(day_rows.sort_values("MOM10", ascending=False), use_container_width=True, hide_index=True)
+                except Exception as exc: st.warning(f"Không đọc được lịch sử lọc: {exc}")
+            else: st.info("Lịch sử lọc theo ngày sẽ xuất hiện sau khi workflow lưu phiên đầu tiên.")
             st.dataframe(filtered_mom10[["Mã", "Sàn", "Giá đóng cửa", "MOM10 (FireAnt)", "ROC14 (%)", "EMA100", "Khối lượng", "KLGD TB20", "Ngày dữ liệu"]], use_container_width=True, hide_index=True)
             st.download_button("Tải CSV MOM10", filtered_mom10.to_csv(index=False).encode("utf-8-sig"), "co_phieu_MOM10_dat_nguong.csv", "text/csv")
         with roc_tab:
@@ -444,6 +463,60 @@ def render_stock_dashboard():
             missing_symbols = [symbol for symbol in chart_symbols if symbol not in set(comparison["Mã"].astype(str).str.upper())]
             if missing_symbols:
                 st.caption("Chưa có dữ liệu đối chiếu cho: " + ", ".join(missing_symbols))
+
+    with tab_growth:
+        st.subheader("BỘ ĐẾM TĂNG TRƯỞNG")
+        growth_path = __import__("pathlib").Path(__file__).resolve().parent / "stocklab_market_history.csv"
+        if not growth_path.exists():
+            st.info("Chưa có lịch sử theo ngày. Bộ đếm sẽ có dữ liệu sau khi workflow quét và lưu phiên giao dịch.")
+        else:
+            try:
+                from growth_counter import calculate_growth_sequences
+
+                sequences = calculate_growth_sequences(pd.read_csv(growth_path))
+                current = pd.DataFrame(sequences["current"])
+                detail = pd.DataFrame(sequences["detail"])
+                completed = sequences["completed"]
+                interrupted = sequences["interrupted"]
+
+                st.caption(
+                    "Quy tắc: Ngày 1 phải có giá đóng cửa thấp hơn đồng thời EMA7 và SMA20. "
+                    "Từ ngày 2, tiếp tục đếm nếu giá không thấp hơn đồng thời cả hai đường "
+                    "(đạt ít nhất một trong hai). Khi đóng cửa thấp hơn cả hai, chuỗi cũ dừng "
+                    "và phiên dừng không được tính. Thiếu phiên dữ liệu thì đánh dấu gián đoạn, "
+                    "không tự nối chuỗi."
+                )
+                if current.empty:
+                    st.info("Không có chuỗi nào được xác nhận đang hoạt động ở phiên dữ liệu mới nhất.")
+                else:
+                    counts = pd.to_numeric(current["Số ngày"], errors="coerce")
+                    a, b, c, d, e, f = st.columns(6)
+                    a.metric("Đang hoạt động", f"{len(current):,}")
+                    b.metric("Từ 3 ngày", f"{(counts >= 3).sum():,}")
+                    c.metric("Từ 5 ngày", f"{(counts >= 5).sum():,}")
+                    d.metric("Từ 7 ngày", f"{(counts >= 7).sum():,}")
+                    e.metric("Từ 9 ngày", f"{(counts >= 9).sum():,}")
+                    f.metric("Trên 10 ngày", f"{(counts > 10).sum():,}")
+                    st.dataframe(current.sort_values(["Số ngày", "Mã"], ascending=[False, True]),
+                                 use_container_width=True, hide_index=True)
+                st.subheader("Lịch sử từng phiên")
+                if not detail.empty:
+                    st.dataframe(detail.sort_values(["Mã", "Ngày"]), use_container_width=True, hide_index=True)
+                st.subheader("Chuỗi đã kết thúc")
+                if completed:
+                    st.dataframe(pd.DataFrame(completed).sort_values(["Mã", "Ngày bắt đầu"]),
+                                 use_container_width=True, hide_index=True)
+                else:
+                    st.info("Chưa có chuỗi nào kết thúc.")
+                st.subheader("Chuỗi gián đoạn hoặc chưa xác nhận")
+                if interrupted:
+                    st.dataframe(pd.DataFrame(interrupted).sort_values(["Mã", "Ngày bắt đầu"]),
+                                 use_container_width=True, hide_index=True)
+                else:
+                    st.caption("Không có chuỗi nào bị gián đoạn dữ liệu.")
+
+            except Exception as exc:
+                st.error(f"Không thể tính bộ đếm tăng trưởng: {exc}")
 
     with tab_all:
         st.subheader("Bảng dữ liệu toàn thị trường")
