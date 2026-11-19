@@ -333,7 +333,7 @@ def render_stock_dashboard():
             with st.expander(f"Lỗi dữ liệu trong các lượt quét ({len(stats['errors'])})"):
                 st.write(stats["errors"][-50:])
 
-    tab_scan, tab_chart, tab_all = st.tabs(["🔎 Bộ lọc cổ phiếu", "📊 Biểu đồ kỹ thuật", "📋 Toàn bộ thị trường"])
+    tab_scan, tab_chart, tab_all, tab_lct = st.tabs(["🔎 Bộ lọc cổ phiếu", "📊 Biểu đồ kỹ thuật", "📋 Toàn bộ thị trường", "📈 LUCHUUTHANH"])
     with tab_scan:
         mom_tab, roc_tab = st.tabs(["MOM10 ≥ ngưỡng", "ROC14 ≥ ngưỡng"])
         with mom_tab:
@@ -458,3 +458,7 @@ def render_stock_dashboard():
 
     from cophieu68_import import render_cophieu68_import
     render_cophieu68_import()
+
+    with tab_lct:
+        from luchuuthanh_chart import render_luchuuthanh_chart
+        render_luchuuthanh_chart()
