@@ -6,6 +6,7 @@ on:
     paths:
       - "stock_app.py"
       - "stock_dashboard.py"
+      - "luchuuthanh_chart.py"
       - "cophieu68_import.py"
       - "requirements.txt"
       - ".github/workflows/stocklab.yml"
@@ -33,7 +34,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
       - name: Check Python syntax
-        run: python -m py_compile stock_app.py stock_dashboard.py cophieu68_import.py
+        run: python -m py_compile stock_app.py stock_dashboard.py luchuuthanh_chart.py cophieu68_import.py
       - name: Live Cophieu68 history smoke test
         run: |
           python - <<'PY'
@@ -81,7 +82,25 @@ jobs:
           print(f"D1 pipeline OK: source={source}; candles={len(chart)}; latest={latest['date']}")
           print(f"FPT D1: close={latest['close']:.2f}; EMA20={latest['EMA20']:.2f}; EMA50={latest['EMA50']:.2f}; EMA100={latest['EMA100']:.2f}; ROC14={latest['ROC14']:.2f}%; RSI14={latest['RSI14']:.1f}; volume={latest['volume']:.0f}")
           PY
+      - name: Validate LUCHUUTHANH indicator calculations
+        run: |
+          python - <<'PY'
+          import numpy as np
+          import pandas as pd
+          from luchuuthanh_chart import _signals
+          from stock_dashboard import add_indicators
+          n = 180
+          x = np.arange(n)
+          close = pd.Series(100 + x * .06 + np.sin(x / 5) * 3)
+          df = pd.DataFrame({"close": close, "open": close - .2, "high": close + 1, "low": close - 1, "volume": 100000 + x * 100})
+          result = _signals(add_indicators(df))
+          for key in ("LCT_FAST", "LCT_YELLOW", "LCT_SLOW", "LCT_UPPER", "LCT_LOWER", "MACD", "MACD_SIGNAL", "RSI14"):
+              assert result[key].notna().sum() > 30, f"{key}: insufficient valid data"
+          assert result["LCT_FAST"].dropna().between(0,100).all()
+          print("LUCHUUTHANH indicator calculation smoke test OK")
+          PY
       - name: Scan sideways stocks (60 and 120 sessions)
+        if: github.event_name != 'push'
         timeout-minutes: 60
         run: |
           python - <<'PY'
@@ -156,7 +175,7 @@ jobs:
           print("SAMPLE ERRORS:", errors[:15])
           PY
       - name: Publish latest market scan for StockLab
-        if: success()
+        if: success() && github.event_name != 'push'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
