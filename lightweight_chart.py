@@ -6,6 +6,28 @@ import streamlit.components.v1 as components
 
 def render_lightweight_chart(chart: pd.DataFrame, symbol: str) -> None:
     """Render interactive candles with touch navigation, volume and selectable overlays."""
+    # Standard Ichimoku (9, 26, 52), with 26-period projection.
+    ordered = chart.sort_values("date").drop_duplicates("date", keep="last").copy()
+    hi9 = ordered["high"].rolling(9, min_periods=9).max()
+    lo9 = ordered["low"].rolling(9, min_periods=9).min()
+    hi26 = ordered["high"].rolling(26, min_periods=26).max()
+    lo26 = ordered["low"].rolling(26, min_periods=26).min()
+    hi52 = ordered["high"].rolling(52, min_periods=52).max()
+    lo52 = ordered["low"].rolling(52, min_periods=52).min()
+    tenkan = (hi9 + lo9) / 2
+    kijun = (hi26 + lo26) / 2
+    span_a = (tenkan + kijun) / 2
+    span_b = (hi52 + lo52) / 2
+    dates = list(ordered["date"])
+    future = pd.bdate_range(start=dates[-1] + pd.Timedelta(days=1), periods=26)
+    projected_dates = dates + list(future)
+    def ichipoints(values, shift=0):
+        return [{"time": projected_dates[i + shift].strftime("%Y-%m-%d"), "value": round(float(v), 6)}
+                for i, v in enumerate(values) if pd.notna(v) and 0 <= i + shift < len(projected_dates)]
+    ichimoku = {"Tenkan": ichipoints(tenkan), "Kijun": ichipoints(kijun),
+                "SenkouA": ichipoints(span_a, 26), "SenkouB": ichipoints(span_b, 26),
+                "Chikou": ichipoints(ordered["close"], -26)}
+    chart = ordered
     def points(column):
         return [{"time": d.strftime("%Y-%m-%d"), "value": round(float(v), 6)}
                 for d, v in zip(chart["date"], chart[column]) if pd.notna(v)]
@@ -20,7 +42,7 @@ def render_lightweight_chart(chart: pd.DataFrame, symbol: str) -> None:
                           "overlays": {k: points(k) for k in ("EMA7", "SMA20", "EMA20", "EMA50", "EMA100")},
                           "rsi": points("RSI14"), "macd": points("MACD"),
                           "signal": points("MACD_SIGNAL"), "hist": points("MACD_HIST"),
-                          "symbol": symbol}, ensure_ascii=True).replace("</", "<\\/")
+                          "symbol": symbol, "ichimoku": ichimoku}, ensure_ascii=True).replace("</", "<\\/")
     html = """<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
 <style>html,body{margin:0;background:#101722;color:#e4eaf2;font:13px system-ui,sans-serif}
 #toolbar{display:flex;gap:6px;overflow-x:auto;padding:8px;white-space:nowrap}
@@ -42,18 +64,26 @@ const candle=price.addCandlestickSeries({upColor:'#26a69a',downColor:'#ef5350',w
 candle.setData(data.candles);
 const colors={EMA7:'#f8d05a',SMA20:'#37c3ff',EMA20:'#b48bff',EMA50:'#f59e73',EMA100:'#e5e7eb'};
 const overlay={};
+const ichiColors={Tenkan:'#ff9d43',Kijun:'#e95bb5',SenkouA:'#29bd88',SenkouB:'#f87171',Chikou:'#9acaff'};
+const ichi={};
+for(const [name,points] of Object.entries(data.ichimoku)){const series=price.addLineSeries({color:ichiColors[name],lineWidth:2,priceLineVisible:false,lastValueVisible:false,visible:false});series.setData(points);ichi[name]=series;}
 for(const [name,points] of Object.entries(data.overlays)){const s=price.addLineSeries({color:colors[name],lineWidth:2,priceLineVisible:false,lastValueVisible:true});s.setData(points);overlay[name]=s;}
 const vol=L.createChart(document.getElementById('volume'),{...base,width:Math.max(320,document.getElementById('volume').clientWidth),height:90,timeScale:{...base.timeScale,visible:false},rightPriceScale:{visible:false}});
 vol.addHistogramSeries({priceFormat:{type:'volume'},priceScaleId:''}).setData(data.volume);
 const osc=L.createChart(document.getElementById('osc'),{...base,width:Math.max(320,document.getElementById('osc').clientWidth),height:145});
 const rsi=osc.addLineSeries({color:'#dba5ff',lineWidth:2,priceLineVisible:false});rsi.setData(data.rsi);
+const rsi30=osc.addLineSeries({color:'#f59e0b',lineWidth:1,lineStyle:2,priceLineVisible:false,lastValueVisible:false});
+const rsi70=osc.addLineSeries({color:'#f59e0b',lineWidth:1,lineStyle:2,priceLineVisible:false,lastValueVisible:false});
+rsi30.setData(data.rsi.map(p=>({time:p.time,value:30})));
+rsi70.setData(data.rsi.map(p=>({time:p.time,value:70})));
 const macd=osc.addLineSeries({color:'#36c6e9',lineWidth:2,priceLineVisible:false});macd.setData(data.macd);
 const signal=osc.addLineSeries({color:'#f8d05a',lineWidth:2,priceLineVisible:false});signal.setData(data.signal);
 const hist=osc.addHistogramSeries({color:'#5aa59c',priceLineVisible:false});hist.setData(data.hist);
-const modes={RSI:[rsi],MACD:[macd,signal,hist]};
+const modes={RSI:[rsi,rsi30,rsi70],MACD:[macd,signal,hist]};
 let current='RSI';
 function setMode(name){current=name;for(const [key,series] of Object.entries(modes))for(const s of series)s.applyOptions({visible:key===name});document.querySelectorAll('[data-mode]').forEach(b=>b.classList.toggle('active',b.dataset.mode===name));osc.timeScale().fitContent();}
 const toolbar=document.getElementById('toolbar');
+const ichiButton=document.createElement('button');ichiButton.textContent='Ichimoku (9,26,52)';ichiButton.onclick=()=>{const on=!ichiButton.classList.contains('active');ichiButton.classList.toggle('active',on);for(const series of Object.values(ichi))series.applyOptions({visible:on});};toolbar.appendChild(ichiButton);
 for(const name of Object.keys(overlay)){const b=document.createElement('button');b.textContent=name;b.className=['EMA7','SMA20','EMA100'].includes(name)?'active':'';overlay[name].applyOptions({visible:b.className==='active'});b.onclick=()=>{const on=!b.classList.contains('active');b.classList.toggle('active',on);overlay[name].applyOptions({visible:on});};toolbar.appendChild(b);}
 for(const name of ['RSI','MACD']){const b=document.createElement('button');b.textContent=name;b.dataset.mode=name;b.onclick=()=>setMode(name);toolbar.appendChild(b);}
 setMode('RSI');
