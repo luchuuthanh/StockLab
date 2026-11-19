@@ -32,8 +32,9 @@ button.active{background:#186b7c;border-color:#32c7c5}#status{padding:4px 10px;m
 <script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
 <script>
 const data=__DATA__;
-if(!window.LightweightCharts){document.getElementById('error').textContent='Không tải được thư viện biểu đồ. Kiểm tra kết nối mạng.';}
-else {
+document.getElementById('status').textContent=data.symbol+' · '+data.candles.length+' phiên · Đang khởi tạo biểu đồ';
+if(!window.LightweightCharts){document.getElementById('error').textContent='Lỗi tải thư viện biểu đồ từ CDN. Vui lòng kiểm tra kết nối mạng.';}
+else {try {
 const L=window.LightweightCharts;
 const base={layout:{background:{type:'solid',color:'#101722'},textColor:'#c8d2df'},grid:{vertLines:{color:'#1b2736'},horzLines:{color:'#1b2736'}},rightPriceScale:{borderColor:'#35465a'},timeScale:{borderColor:'#35465a',timeVisible:false},handleScroll:{mouseWheel:true,pressedMouseMove:true,horzTouchDrag:true,vertTouchDrag:false},handleScale:{mouseWheel:true,pinch:true,axisPressedMouseMove:true}};
 const price=L.createChart(document.getElementById('price'),{...base,height:410});
@@ -61,8 +62,10 @@ let syncing=false;
 function sync(from,to){from.timeScale().subscribeVisibleLogicalRangeChange(range=>{if(!range||syncing)return;syncing=true;to.timeScale().setVisibleLogicalRange(range);syncing=false;});}
 sync(price,vol);sync(price,osc);
 price.timeScale().fitContent();vol.timeScale().fitContent();osc.timeScale().fitContent();
+document.getElementById('status').textContent=data.symbol+' · '+data.candles.length+' phiên · Vuốt để xem lịch sử · Chụm hai ngón để thu phóng';
 const observer=new ResizeObserver(()=>{for(const [id,c] of [['price',price],['volume',vol],['osc',osc]])c.applyOptions({width:document.getElementById(id).clientWidth});});
 observer.observe(document.body);
+} catch(e) {document.getElementById('error').textContent='Lỗi khởi tạo biểu đồ: '+(e && e.message ? e.message : String(e)); console.error(e);}
 }
 </script></body></html>""".replace("__DATA__", payload)
     components.html(html, height=735, scrolling=False)
