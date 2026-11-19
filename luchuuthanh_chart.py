@@ -40,7 +40,7 @@ def render_luchuuthanh_chart():
     st.subheader("📊 LUCHUUTHANH – Biểu đồ kỹ thuật")
     st.caption("Khung sáng là mô hình tái tạo thử nghiệm từ ảnh, chưa xác minh công thức AFL gốc.")
     symbol=st.text_input("Mã cổ phiếu",value="FPT",key="lct_symbol").strip().upper()
-    days=st.selectbox("Lịch sử (ngày)",[180,260,365,520,730],index=2,key="lct_days")
+    days=st.selectbox("Khoảng thời gian hiển thị (ngày)",[60,90,120,180,260,365,520,730],index=1,key="lct_days")
     view=st.selectbox("Chọn biểu đồ",["Giá và EMA","LUCHUUTHANH","MACD","RSI","Khối lượng","Tổng hợp 5 biểu đồ"],key="lct_view")
     if not symbol or not symbol.isalnum():
         st.warning("Nhập mã cổ phiếu hợp lệ.")
