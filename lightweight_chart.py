@@ -37,15 +37,15 @@ if(!window.LightweightCharts){document.getElementById('error').textContent='Lỗ
 else {try {
 const L=window.LightweightCharts;
 const base={layout:{background:{type:'solid',color:'#101722'},textColor:'#c8d2df'},grid:{vertLines:{color:'#1b2736'},horzLines:{color:'#1b2736'}},rightPriceScale:{borderColor:'#35465a'},timeScale:{borderColor:'#35465a',timeVisible:false},handleScroll:{mouseWheel:true,pressedMouseMove:true,horzTouchDrag:true,vertTouchDrag:false},handleScale:{mouseWheel:true,pinch:true,axisPressedMouseMove:true}};
-const price=L.createChart(document.getElementById('price'),{...base,height:410});
+const price=L.createChart(document.getElementById('price'),{...base,width:Math.max(320,document.getElementById('price').clientWidth),height:410});
 const candle=price.addCandlestickSeries({upColor:'#26a69a',downColor:'#ef5350',wickUpColor:'#26a69a',wickDownColor:'#ef5350',borderVisible:false});
 candle.setData(data.candles);
 const colors={EMA7:'#f8d05a',SMA20:'#37c3ff',EMA20:'#b48bff',EMA50:'#f59e73',EMA100:'#e5e7eb'};
 const overlay={};
 for(const [name,points] of Object.entries(data.overlays)){const s=price.addLineSeries({color:colors[name],lineWidth:2,priceLineVisible:false,lastValueVisible:true});s.setData(points);overlay[name]=s;}
-const vol=L.createChart(document.getElementById('volume'),{...base,height:90,timeScale:{...base.timeScale,visible:false},rightPriceScale:{visible:false}});
+const vol=L.createChart(document.getElementById('volume'),{...base,width:Math.max(320,document.getElementById('volume').clientWidth),height:90,timeScale:{...base.timeScale,visible:false},rightPriceScale:{visible:false}});
 vol.addHistogramSeries({priceFormat:{type:'volume'},priceScaleId:''}).setData(data.volume);
-const osc=L.createChart(document.getElementById('osc'),{...base,height:145});
+const osc=L.createChart(document.getElementById('osc'),{...base,width:Math.max(320,document.getElementById('osc').clientWidth),height:145});
 const rsi=osc.addLineSeries({color:'#dba5ff',lineWidth:2,priceLineVisible:false});rsi.setData(data.rsi);
 const macd=osc.addLineSeries({color:'#36c6e9',lineWidth:2,priceLineVisible:false});macd.setData(data.macd);
 const signal=osc.addLineSeries({color:'#f8d05a',lineWidth:2,priceLineVisible:false});signal.setData(data.signal);
@@ -64,7 +64,8 @@ sync(price,vol);sync(price,osc);
 price.timeScale().fitContent();vol.timeScale().fitContent();osc.timeScale().fitContent();
 document.getElementById('status').textContent=data.symbol+' · '+data.candles.length+' phiên · Vuốt để xem lịch sử · Chụm hai ngón để thu phóng';
 const observer=new ResizeObserver(()=>{for(const [id,c] of [['price',price],['volume',vol],['osc',osc]])c.applyOptions({width:document.getElementById(id).clientWidth});});
-observer.observe(document.body);
+for(const id of ['price','volume','osc'])observer.observe(document.getElementById(id));
+setTimeout(()=>{for(const [id,c] of [['price',price],['volume',vol],['osc',osc]])c.applyOptions({width:Math.max(320,document.getElementById(id).clientWidth)});price.timeScale().fitContent();},500);
 } catch(e) {document.getElementById('error').textContent='Lỗi khởi tạo biểu đồ: '+(e && e.message ? e.message : String(e)); console.error(e);}
 }
 </script></body></html>""".replace("__DATA__", payload)
