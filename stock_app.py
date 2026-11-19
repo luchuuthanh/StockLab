@@ -1,5 +1,6 @@
 import streamlit as st
 from stock_dashboard import render_stock_dashboard
+from luchuuthanh_chart import render_luchuuthanh_chart
 
 st.set_page_config(
     page_title="StockLab Việt Nam",
@@ -15,4 +16,8 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-render_stock_dashboard()
+main_tab, luchuuthanh_tab = st.tabs(["📈 STOCKLAB – Bộ lọc và dữ liệu", "📊 LUCHUUTHANH – Biểu đồ"])
+with main_tab:
+    render_stock_dashboard()
+with luchuuthanh_tab:
+    render_luchuuthanh_chart()
