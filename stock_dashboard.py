@@ -456,8 +456,9 @@ def render_stock_dashboard():
             with st.expander(f"Lỗi ở {len(stats['errors'])} mã"):
                 st.code("\n".join(stats["errors"][:100]))
 
-    from cophieu68_import import render_cophieu68_import
-    render_cophieu68_import()
+    with tab_all:
+        from cophieu68_import import render_cophieu68_import
+        render_cophieu68_import()
 
     with tab_lct:
         from luchuuthanh_chart import render_luchuuthanh_chart
