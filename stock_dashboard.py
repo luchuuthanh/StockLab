@@ -5,8 +5,6 @@ from datetime import date, timedelta
 import os
 import pandas as pd
 import streamlit as st
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 
 EXCHANGES = {"HOSE", "HNX", "UPCOM"}
 DATA_SOURCES = ("vci", "kbs")
@@ -128,6 +126,8 @@ def sanitize_daily_chart_bars(df: pd.DataFrame) -> tuple[pd.DataFrame, str | Non
 
 def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
+    out["EMA7"] = out["close"].ewm(span=7, adjust=False, min_periods=7).mean()
+    out["SMA20"] = out["close"].rolling(20, min_periods=20).mean()
     out["EMA20"] = out["close"].ewm(span=20, adjust=False, min_periods=20).mean()
     out["EMA50"] = out["close"].ewm(span=50, adjust=False, min_periods=50).mean()
     out["EMA100"] = out["close"].ewm(span=100, adjust=False, min_periods=100).mean()
@@ -410,36 +410,8 @@ def render_stock_dashboard():
                 p3.metric("ROC14", f"{last['ROC14']:.2f}%" if pd.notna(last["ROC14"]) else "—")
                 p4.metric("RSI14", f"{last['RSI14']:.1f}" if pd.notna(last["RSI14"]) else "—")
                 p5.metric("Khối lượng", f"{last['volume']:,.0f}")
-                fig = make_subplots(
-                    rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.045,
-                    row_heights=[0.52, 0.14, 0.17, 0.17],
-                    specs=[[{"secondary_y": False}], [{"secondary_y": False}], [{"secondary_y": False}], [{"secondary_y": False}]]
-                )
-                fig.add_trace(go.Candlestick(
-                    x=chart["date"], open=chart["open"], high=chart["high"],
-                    low=chart["low"], close=chart["close"], name="Giá"
-                ), row=1, col=1)
-                for col, label in [("EMA20", "EMA20"), ("EMA50", "EMA50"), ("EMA100", "EMA100")]:
-                    fig.add_trace(go.Scatter(x=chart["date"], y=chart[col], mode="lines", name=label), row=1, col=1)
-                fig.add_trace(go.Bar(x=chart["date"], y=chart["volume"], name="Khối lượng"), row=2, col=1)
-                fig.add_trace(go.Scatter(x=chart["date"], y=chart["RSI14"], name="RSI14"), row=3, col=1)
-                fig.add_hline(y=70, line_dash="dot", row=3, col=1)
-                fig.add_hline(y=30, line_dash="dot", row=3, col=1)
-                # MACD is the fourth panel of the same figure, sharing the trading-date axis.
-                fig.add_trace(go.Bar(x=chart["date"], y=chart["MACD_HIST"], name="MACD Histogram"), row=4, col=1)
-                fig.add_trace(go.Scatter(x=chart["date"], y=chart["MACD"], name="MACD"), row=4, col=1)
-                fig.add_trace(go.Scatter(x=chart["date"], y=chart["MACD_SIGNAL"], name="Signal"), row=4, col=1)
-                fig.add_hline(y=0, line_dash="dot", row=4, col=1)
-                fig.update_layout(
-                    title=f"{selected} · {timeframe}", height=1120, template="plotly_dark", xaxis_rangeslider_visible=False,
-                    margin=dict(l=10, r=10, t=35, b=10), legend=dict(orientation="h", y=1.02),
-                    hovermode="x unified"
-                )
-                fig.update_yaxes(title_text="Giá", row=1, col=1)
-                fig.update_yaxes(title_text="KL", row=2, col=1)
-                fig.update_yaxes(title_text="RSI", range=[0, 100], row=3, col=1)
-                fig.update_yaxes(title_text="MACD", row=4, col=1)
-                st.plotly_chart(fig, use_container_width=True)
+                from lightweight_chart import render_lightweight_chart
+                render_lightweight_chart(chart, selected)
                 st.dataframe(chart.tail(30).sort_values("date", ascending=False), use_container_width=True, hide_index=True)
         except Exception as exc:
             st.error(f"Không tải được biểu đồ {selected}: {exc}")
