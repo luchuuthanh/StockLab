@@ -1,0 +1,98 @@
+"""LUCHUUTHANH experimental technical chart, isolated from existing scanner."""
+from datetime import date, timedelta
+import numpy as np
+import pandas as pd
+import streamlit as st
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+def _rsi(close, n=14):
+    d=close.diff()
+    up=d.clip(lower=0).ewm(alpha=1/n,adjust=False,min_periods=n).mean()
+    down=(-d.clip(upper=0)).ewm(alpha=1/n,adjust=False,min_periods=n).mean()
+    r=100-100/(1+up/down.replace(0,np.nan))
+    return r.mask((down==0)&(up>0),100).mask((down==0)&(up==0),50)
+
+def _signals(df):
+    """Experimental stochastic-RSI blend, NOT original TOANDAITUONG AFL."""
+    c=df["close"]
+    r=_rsi(c)
+    lo=r.rolling(14,min_periods=14).min()
+    hi=r.rolling(14,min_periods=14).max()
+    raw=(100*(r-lo)/(hi-lo).replace(0,np.nan)).clip(0,100)
+    fast=raw.ewm(span=3,adjust=False).mean()
+    yellow=fast.ewm(span=3,adjust=False).mean()
+    slow=yellow.ewm(span=9,adjust=False).mean()
+    dev=fast.rolling(14,min_periods=5).std().fillna(0)
+    df["LCT_FAST"]=fast
+    df["LCT_YELLOW"]=yellow
+    df["LCT_SLOW"]=slow
+    df["LCT_UPPER"]=(yellow+1.5*dev).clip(0,100)
+    df["LCT_LOWER"]=(yellow-1.5*dev).clip(0,100)
+    cross_up=(fast>slow)&(fast.shift(1)<=slow.shift(1))&(fast<35)
+    cross_down=(fast<slow)&(fast.shift(1)>=slow.shift(1))&(fast>65)
+    df["LCT_BUY"]=fast.where(cross_up)
+    df["LCT_SELL"]=fast.where(cross_down)
+    return df
+
+def render_luchuuthanh_chart():
+    from stock_dashboard import fetch_chart_quotes, sanitize_daily_chart_bars, add_indicators
+    st.subheader("📊 LUCHUUTHANH – Biểu đồ kỹ thuật")
+    st.caption("Khung sáng là mô hình tái tạo thử nghiệm từ ảnh, chưa xác minh công thức AFL gốc.")
+    a,b=st.columns([2,1])
+    with a:
+        symbol=st.text_input("Mã cổ phiếu",value="FPT",key="lct_symbol").strip().upper()
+    with b:
+        days=st.selectbox("Lịch sử (ngày)",[180,260,365,520,730],index=2,key="lct_days")
+    if not symbol or not symbol.isalnum():
+        st.warning("Nhập mã cổ phiếu hợp lệ.")
+        return
+    start=(date.today()-timedelta(days=days+160)).isoformat()
+    try:
+        raw,source=fetch_chart_quotes(symbol,start,date.today().isoformat(),interval="1D")
+        clean,warning=sanitize_daily_chart_bars(raw)
+        if warning: st.warning(warning)
+        df=_signals(add_indicators(clean.copy()))
+        if len(df)<40:
+            st.warning("Cần tối thiểu 40 phiên có dữ liệu để hiển thị chỉ báo.")
+            return
+        df["EMA10_PRICE"]=df["close"].ewm(span=10,adjust=False).mean()
+        df["EMA10_VOLUME"]=df["volume"].ewm(span=10,adjust=False).mean()
+        df=df[df["date"]>=pd.Timestamp(date.today()-timedelta(days=days))].copy()
+        fig=make_subplots(rows=5,cols=1,shared_xaxes=True,vertical_spacing=.025,
+            row_heights=[.38,.23,.13,.12,.14])
+        fig.add_trace(go.Candlestick(x=df.date,open=df.open,high=df.high,low=df.low,close=df.close,name="Nến giá"),row=1,col=1)
+        for col,color in [("EMA10_PRICE","#f59e0b"),("EMA20","#f472b6"),("EMA50","#22c55e"),("EMA100","#a855f7")]:
+            fig.add_trace(go.Scatter(x=df.date,y=df[col],name=col,mode="lines",line=dict(color=color,width=1.5)),row=1,col=1)
+        for col,name,color,width in [
+            ("LCT_FAST","LUCHUUTHANH nhanh","#16a34a",2),
+            ("LCT_YELLOW","Tín hiệu vàng","#eab308",1.6),
+            ("LCT_SLOW","Chậm","#dc2626",2),
+            ("LCT_UPPER","Dải trắng trên","#f8fafc",1),
+            ("LCT_LOWER","Dải trắng dưới","#f8fafc",1)]:
+            fig.add_trace(go.Scatter(x=df.date,y=df[col],name=name,mode="lines",line=dict(color=color,width=width)),row=2,col=1)
+        for col,name,color,symbol_marker in [
+            ("LCT_BUY","Mua thử nghiệm","#22c55e","triangle-up"),
+            ("LCT_SELL","Bán thử nghiệm","#ef4444","triangle-down")]:
+            pts=df.dropna(subset=[col])
+            fig.add_trace(go.Scatter(x=pts.date,y=pts[col],mode="markers",name=name,
+                marker=dict(color=color,size=11,symbol=symbol_marker)),row=2,col=1)
+        for level in [20,80]:
+            fig.add_hline(y=level,line_dash="dot",line_color="#64748b",row=2,col=1)
+        fig.add_trace(go.Scatter(x=df.date,y=df.MACD,name="MACD 12,26",line=dict(color="#38bdf8")),row=3,col=1)
+        fig.add_trace(go.Scatter(x=df.date,y=df.MACD_SIGNAL,name="Signal 9",line=dict(color="#f59e0b")),row=3,col=1)
+        fig.add_trace(go.Bar(x=df.date,y=df.MACD_HIST,name="MACD Histogram",marker_color=np.where(df.MACD_HIST>=0,"#22c55e","#ef4444")),row=3,col=1)
+        fig.add_trace(go.Scatter(x=df.date,y=df.RSI14,name="RSI14",line=dict(color="#a78bfa")),row=4,col=1)
+        for level in [30,50,70]:
+            fig.add_hline(y=level,line_dash="dot",line_color="#64748b",row=4,col=1)
+        fig.add_trace(go.Bar(x=df.date,y=df.volume,name="Khối lượng",marker_color=np.where(df.close>=df.open,"#22c55e","#ef4444")),row=5,col=1)
+        fig.add_trace(go.Scatter(x=df.date,y=df.EMA10_VOLUME,name="EMA10 khối lượng",line=dict(color="#facc15",width=2)),row=5,col=1)
+        fig.update_yaxes(range=[0,100],row=2,col=1)
+        fig.update_yaxes(range=[0,100],row=4,col=1)
+        fig.update_layout(height=1100,template="plotly_dark",xaxis_rangeslider_visible=False,
+            legend=dict(orientation="h",y=-.07),margin=dict(l=12,r=12,t=35,b=60),
+            title=f"{symbol} · LUCHUUTHANH · D1")
+        st.caption(f"Nguồn: {source} · Dữ liệu D1 · Tín hiệu khung sáng chỉ dùng nghiên cứu.")
+        st.plotly_chart(fig,use_container_width=True,key="lct_plot")
+    except Exception as exc:
+        st.error(f"Không tải hoặc dựng được biểu đồ {symbol}: {exc}")
