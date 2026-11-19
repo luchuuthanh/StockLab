@@ -15,4 +15,6 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+st.sidebar.caption("StockLab build: LCT-5P-20261119")
+
 render_stock_dashboard()
