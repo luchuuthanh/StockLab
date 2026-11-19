@@ -39,11 +39,9 @@ def render_luchuuthanh_chart():
     from stock_dashboard import fetch_chart_quotes, sanitize_daily_chart_bars, add_indicators
     st.subheader("📊 LUCHUUTHANH – Biểu đồ kỹ thuật")
     st.caption("Khung sáng là mô hình tái tạo thử nghiệm từ ảnh, chưa xác minh công thức AFL gốc.")
-    a,b=st.columns([2,1])
-    with a:
-        symbol=st.text_input("Mã cổ phiếu",value="FPT",key="lct_symbol").strip().upper()
-    with b:
-        days=st.selectbox("Lịch sử (ngày)",[180,260,365,520,730],index=2,key="lct_days")
+    symbol=st.text_input("Mã cổ phiếu",value="FPT",key="lct_symbol").strip().upper()
+    days=st.selectbox("Lịch sử (ngày)",[180,260,365,520,730],index=2,key="lct_days")
+    view=st.selectbox("Chọn biểu đồ",["Giá và EMA","LUCHUUTHANH","MACD","RSI","Khối lượng","Tổng hợp 5 biểu đồ"],key="lct_view")
     if not symbol or not symbol.isalnum():
         st.warning("Nhập mã cổ phiếu hợp lệ.")
         return
@@ -59,39 +57,51 @@ def render_luchuuthanh_chart():
         df["EMA10_PRICE"]=df["close"].ewm(span=10,adjust=False).mean()
         df["EMA10_VOLUME"]=df["volume"].ewm(span=10,adjust=False).mean()
         df=df[df["date"]>=pd.Timestamp(date.today()-timedelta(days=days))].copy()
-        fig=make_subplots(rows=5,cols=1,shared_xaxes=True,vertical_spacing=.025,
-            row_heights=[.38,.23,.13,.12,.14])
-        fig.add_trace(go.Candlestick(x=df.date,open=df.open,high=df.high,low=df.low,close=df.close,name="Nến giá"),row=1,col=1)
+        views={"Giá và EMA":1,"LUCHUUTHANH":2,"MACD":3,"RSI":4,"Khối lượng":5}
+        selected=views.get(view)
+        panels=[selected] if selected else [1,2,3,4,5]
+        def panel(original):
+            return panels.index(original)+1 if original in panels else None
+        fig=make_subplots(rows=len(panels),cols=1,shared_xaxes=True,vertical_spacing=.025,
+            row_heights=([.38,.23,.13,.12,.14] if len(panels)==5 else None))
+        def add(trace,original):
+            if panel(original) is not None:
+                fig.add_trace(trace,row=panel(original),col=1)
+        def hline(level,original):
+            if panel(original) is not None:
+                fig.add_hline(y=level,line_dash="dot",line_color="#64748b",row=panel(original),col=1)
+        add(go.Candlestick(x=df.date,open=df.open,high=df.high,low=df.low,close=df.close,name="Nến giá"),1)
         for col,color in [("EMA10_PRICE","#f59e0b"),("EMA20","#f472b6"),("EMA50","#22c55e"),("EMA100","#a855f7")]:
-            fig.add_trace(go.Scatter(x=df.date,y=df[col],name=col,mode="lines",line=dict(color=color,width=1.5)),row=1,col=1)
+            fig.add_trace(go.Scatter(x=df.date,y=df[col],name=col,mode="lines",line=dict(color=color,width=1.5)),1)
         for col,name,color,width in [
             ("LCT_FAST","LUCHUUTHANH nhanh","#16a34a",2),
             ("LCT_YELLOW","Tín hiệu vàng","#eab308",1.6),
             ("LCT_SLOW","Chậm","#dc2626",2),
             ("LCT_UPPER","Dải trắng trên","#f8fafc",1),
             ("LCT_LOWER","Dải trắng dưới","#f8fafc",1)]:
-            fig.add_trace(go.Scatter(x=df.date,y=df[col],name=name,mode="lines",line=dict(color=color,width=width)),row=2,col=1)
+            fig.add_trace(go.Scatter(x=df.date,y=df[col],name=name,mode="lines",line=dict(color=color,width=width)),2)
         for col,name,color,symbol_marker in [
             ("LCT_BUY","Mua thử nghiệm","#22c55e","triangle-up"),
             ("LCT_SELL","Bán thử nghiệm","#ef4444","triangle-down")]:
             pts=df.dropna(subset=[col])
             fig.add_trace(go.Scatter(x=pts.date,y=pts[col],mode="markers",name=name,
-                marker=dict(color=color,size=11,symbol=symbol_marker)),row=2,col=1)
+                marker=dict(color=color,size=11,symbol=symbol_marker)),2)
         for level in [20,80]:
-            fig.add_hline(y=level,line_dash="dot",line_color="#64748b",row=2,col=1)
-        fig.add_trace(go.Scatter(x=df.date,y=df.MACD,name="MACD 12,26",line=dict(color="#38bdf8")),row=3,col=1)
-        fig.add_trace(go.Scatter(x=df.date,y=df.MACD_SIGNAL,name="Signal 9",line=dict(color="#f59e0b")),row=3,col=1)
-        fig.add_trace(go.Bar(x=df.date,y=df.MACD_HIST,name="MACD Histogram",marker_color=np.where(df.MACD_HIST>=0,"#22c55e","#ef4444")),row=3,col=1)
-        fig.add_trace(go.Scatter(x=df.date,y=df.RSI14,name="RSI14",line=dict(color="#a78bfa")),row=4,col=1)
+            hline(level,2)
+        fig.add_trace(go.Scatter(x=df.date,y=df.MACD,name="MACD 12,26",line=dict(color="#38bdf8")),3)
+        fig.add_trace(go.Scatter(x=df.date,y=df.MACD_SIGNAL,name="Signal 9",line=dict(color="#f59e0b")),3)
+        fig.add_trace(go.Bar(x=df.date,y=df.MACD_HIST,name="MACD Histogram",marker_color=np.where(df.MACD_HIST>=0,"#22c55e","#ef4444")),3)
+        fig.add_trace(go.Scatter(x=df.date,y=df.RSI14,name="RSI14",line=dict(color="#a78bfa")),4)
         for level in [30,50,70]:
-            fig.add_hline(y=level,line_dash="dot",line_color="#64748b",row=4,col=1)
-        fig.add_trace(go.Bar(x=df.date,y=df.volume,name="Khối lượng",marker_color=np.where(df.close>=df.open,"#22c55e","#ef4444")),row=5,col=1)
-        fig.add_trace(go.Scatter(x=df.date,y=df.EMA10_VOLUME,name="EMA10 khối lượng",line=dict(color="#facc15",width=2)),row=5,col=1)
-        fig.update_yaxes(range=[0,100],row=2,col=1)
-        fig.update_yaxes(range=[0,100],row=4,col=1)
-        fig.update_layout(height=1100,template="plotly_dark",xaxis_rangeslider_visible=False,
-            legend=dict(orientation="h",y=-.07),margin=dict(l=12,r=12,t=35,b=60),
-            title=f"{symbol} · LUCHUUTHANH · D1")
+            hline(level,4)
+        fig.add_trace(go.Bar(x=df.date,y=df.volume,name="Khối lượng",marker_color=np.where(df.close>=df.open,"#22c55e","#ef4444")),5)
+        fig.add_trace(go.Scatter(x=df.date,y=df.EMA10_VOLUME,name="EMA10 khối lượng",line=dict(color="#facc15",width=2)),5)
+        for original in (2,4):
+            if panel(original) is not None:
+                fig.update_yaxes(range=[0,100],row=panel(original),col=1)
+        fig.update_layout(height=1050 if len(panels)==5 else 480,template="plotly_dark",xaxis_rangeslider_visible=False,
+            legend=dict(orientation="h",y=-.15,font=dict(size=10)),margin=dict(l=4,r=4,t=40,b=90),
+            title=f"{symbol} · {view} · D1")
         st.caption(f"Nguồn: {source} · Dữ liệu D1 · Tín hiệu khung sáng chỉ dùng nghiên cứu.")
         st.plotly_chart(fig,use_container_width=True,key="lct_plot")
     except Exception as exc:
