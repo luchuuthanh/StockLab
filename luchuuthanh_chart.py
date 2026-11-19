@@ -91,7 +91,7 @@ def render_luchuuthanh_chart():
             add(go.Scatter(x=cloud.date,y=cloud.b,name="Senkou Span B",mode="lines",line=dict(color="#ef4444",width=1),fill="tonexty",fillcolor="rgba(45,180,120,0.13)"),1)
             add(go.Scatter(x=base.date,y=tenkan,name="Tenkan-sen",mode="lines",line=dict(color="#fb923c",width=1.5)),1)
             add(go.Scatter(x=base.date,y=kijun,name="Kijun-sen",mode="lines",line=dict(color="#e879f9",width=1.5)),1)
-            add(go.Scatter(x=base.date.iloc[26:],y=base.close.iloc[26:].to_numpy(),name="Chikou Span",mode="lines",line=dict(color="#93c5fd",width=1),visible="legendonly"),1)
+            add(go.Scatter(x=base.date.iloc[:-26],y=base.close.iloc[26:].to_numpy(),name="Chikou Span",mode="lines",line=dict(color="#93c5fd",width=1),visible="legendonly"),1)
         for col,color in [("EMA10_PRICE","#f59e0b"),("EMA20","#f472b6"),("EMA50","#22c55e"),("EMA100","#a855f7")]:
             add(go.Scatter(x=df.date,y=df[col],name=col,mode="lines",line=dict(color=color,width=1.5)),1)
         for col,name,color,width in [
