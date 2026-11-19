@@ -73,6 +73,25 @@ def render_luchuuthanh_chart():
             if panel(original) is not None:
                 fig.add_hline(y=level,line_dash="dot",line_color="#64748b",row=panel(original),col=1)
         add(go.Candlestick(x=df.date,open=df.open,high=df.high,low=df.low,close=df.close,name="Nến giá"),1)
+        # Ichimoku 9/26/52: spans projected 26 sessions ahead; cloud shaded between spans.
+        if st.checkbox("Hiển thị Ichimoku (9, 26, 52)", value=False, key="lct_ichimoku"):
+            base=clean.sort_values("date").drop_duplicates("date").copy()
+            h9=base.high.rolling(9).max(); l9=base.low.rolling(9).min()
+            h26=base.high.rolling(26).max(); l26=base.low.rolling(26).min()
+            h52=base.high.rolling(52).max(); l52=base.low.rolling(52).min()
+            tenkan=(h9+l9)/2; kijun=(h26+l26)/2
+            span_a=(tenkan+kijun)/2; span_b=(h52+l52)/2
+            forward=pd.bdate_range(base.date.iloc[-1]+pd.Timedelta(days=1),periods=26)
+            future_dates=list(base.date)+list(forward)
+            projected=pd.to_datetime(future_dates[26:26+len(base)])
+            visible_start=df.date.min()
+            cloud=pd.DataFrame({"date":projected,"a":span_a.to_numpy(),"b":span_b.to_numpy()}).dropna()
+            cloud=cloud[cloud.date>=visible_start]
+            add(go.Scatter(x=cloud.date,y=cloud.a,name="Senkou Span A",mode="lines",line=dict(color="#22c55e",width=1)),1)
+            add(go.Scatter(x=cloud.date,y=cloud.b,name="Senkou Span B",mode="lines",line=dict(color="#ef4444",width=1),fill="tonexty",fillcolor="rgba(45,180,120,0.13)"),1)
+            add(go.Scatter(x=base.date,y=tenkan,name="Tenkan-sen",mode="lines",line=dict(color="#fb923c",width=1.5)),1)
+            add(go.Scatter(x=base.date,y=kijun,name="Kijun-sen",mode="lines",line=dict(color="#e879f9",width=1.5)),1)
+            add(go.Scatter(x=base.date.iloc[26:],y=base.close.iloc[26:].to_numpy(),name="Chikou Span",mode="lines",line=dict(color="#93c5fd",width=1),visible="legendonly"),1)
         for col,color in [("EMA10_PRICE","#f59e0b"),("EMA20","#f472b6"),("EMA50","#22c55e"),("EMA100","#a855f7")]:
             add(go.Scatter(x=df.date,y=df[col],name=col,mode="lines",line=dict(color=color,width=1.5)),1)
         for col,name,color,width in [
