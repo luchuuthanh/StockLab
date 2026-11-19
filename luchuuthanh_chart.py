@@ -72,30 +72,30 @@ def render_luchuuthanh_chart():
                 fig.add_hline(y=level,line_dash="dot",line_color="#64748b",row=panel(original),col=1)
         add(go.Candlestick(x=df.date,open=df.open,high=df.high,low=df.low,close=df.close,name="Nến giá"),1)
         for col,color in [("EMA10_PRICE","#f59e0b"),("EMA20","#f472b6"),("EMA50","#22c55e"),("EMA100","#a855f7")]:
-            fig.add_trace(go.Scatter(x=df.date,y=df[col],name=col,mode="lines",line=dict(color=color,width=1.5)),1)
+            add(go.Scatter(x=df.date,y=df[col],name=col,mode="lines",line=dict(color=color,width=1.5)),1)
         for col,name,color,width in [
             ("LCT_FAST","LUCHUUTHANH nhanh","#16a34a",2),
             ("LCT_YELLOW","Tín hiệu vàng","#eab308",1.6),
             ("LCT_SLOW","Chậm","#dc2626",2),
             ("LCT_UPPER","Dải trắng trên","#f8fafc",1),
             ("LCT_LOWER","Dải trắng dưới","#f8fafc",1)]:
-            fig.add_trace(go.Scatter(x=df.date,y=df[col],name=name,mode="lines",line=dict(color=color,width=width)),2)
+            add(go.Scatter(x=df.date,y=df[col],name=name,mode="lines",line=dict(color=color,width=width)),2)
         for col,name,color,symbol_marker in [
             ("LCT_BUY","Mua thử nghiệm","#22c55e","triangle-up"),
             ("LCT_SELL","Bán thử nghiệm","#ef4444","triangle-down")]:
             pts=df.dropna(subset=[col])
-            fig.add_trace(go.Scatter(x=pts.date,y=pts[col],mode="markers",name=name,
+            add(go.Scatter(x=pts.date,y=pts[col],mode="markers",name=name,
                 marker=dict(color=color,size=11,symbol=symbol_marker)),2)
         for level in [20,80]:
             hline(level,2)
-        fig.add_trace(go.Scatter(x=df.date,y=df.MACD,name="MACD 12,26",line=dict(color="#38bdf8")),3)
-        fig.add_trace(go.Scatter(x=df.date,y=df.MACD_SIGNAL,name="Signal 9",line=dict(color="#f59e0b")),3)
-        fig.add_trace(go.Bar(x=df.date,y=df.MACD_HIST,name="MACD Histogram",marker_color=np.where(df.MACD_HIST>=0,"#22c55e","#ef4444")),3)
-        fig.add_trace(go.Scatter(x=df.date,y=df.RSI14,name="RSI14",line=dict(color="#a78bfa")),4)
+        add(go.Scatter(x=df.date,y=df.MACD,name="MACD 12,26",line=dict(color="#38bdf8")),3)
+        add(go.Scatter(x=df.date,y=df.MACD_SIGNAL,name="Signal 9",line=dict(color="#f59e0b")),3)
+        add(go.Bar(x=df.date,y=df.MACD_HIST,name="MACD Histogram",marker_color=np.where(df.MACD_HIST>=0,"#22c55e","#ef4444")),3)
+        add(go.Scatter(x=df.date,y=df.RSI14,name="RSI14",line=dict(color="#a78bfa")),4)
         for level in [30,50,70]:
             hline(level,4)
-        fig.add_trace(go.Bar(x=df.date,y=df.volume,name="Khối lượng",marker_color=np.where(df.close>=df.open,"#22c55e","#ef4444")),5)
-        fig.add_trace(go.Scatter(x=df.date,y=df.EMA10_VOLUME,name="EMA10 khối lượng",line=dict(color="#facc15",width=2)),5)
+        add(go.Bar(x=df.date,y=df.volume,name="Khối lượng",marker_color=np.where(df.close>=df.open,"#22c55e","#ef4444")),5)
+        add(go.Scatter(x=df.date,y=df.EMA10_VOLUME,name="EMA10 khối lượng",line=dict(color="#facc15",width=2)),5)
         for original in (2,4):
             if panel(original) is not None:
                 fig.update_yaxes(range=[0,100],row=panel(original),col=1)
