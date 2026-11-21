@@ -420,33 +420,38 @@ def render_stock_dashboard():
             st.download_button("Tải CSV ROC14", filtered_roc14.to_csv(index=False).encode("utf-8-sig"), "co_phieu_ROC14_dat_nguong.csv", "text/csv")
 
     with tab_chart:
-        instruments = st.session_state.get("vnstock_instruments")
-        
         chart_days = st.session_state.get("vnstock_days", days)
         # Text entry works better than a long native selectbox on mobile.
         symbols_text = st.text_input(
-            "Nhập mã cổ phiếu",
+            "Nhập mã cổ phiếu hoặc chỉ số",
             value="AAM",
-            placeholder="Ví dụ: FPT, AAM, AAA",
+            placeholder="Ví dụ: VN-Index, VN30, FPT",
             help="Có thể nhập nhiều mã, ngăn cách bằng dấu phẩy hoặc dấu chấm phẩy.",
             key="stocklab_chart_symbols",
         )
+        index_labels = {code: label for label, code in COMPARE_INDICES.items()}
         chart_symbols = []
         for item in symbols_text.replace(";", ",").split(","):
             symbol = item.strip().upper()
+            symbol = index_labels.get(symbol.replace("-", ""), symbol)
             if symbol and symbol not in chart_symbols:
                 chart_symbols.append(symbol)
         selected = chart_symbols[0] if chart_symbols else "AAM"
-        st.caption("Biểu đồ hiển thị mã đầu tiên. Các mã đã nhập sẽ được đối chiếu trong bảng bên dưới.")
+        st.caption("Biểu đồ hiển thị mã đầu tiên. Bảng đối chiếu bên dưới dùng dữ liệu quét cổ phiếu.")
         try:
             # Keep H1 unavailable until the D1 chart is fully validated in the live app.
             timeframe = "1D"
             st.caption("Đang hoàn thiện và kiểm thử biểu đồ D1. Khung H1 sẽ được mở sau.")
             effective_days = chart_days
             start = (date.today() - timedelta(days=effective_days)).isoformat()
-            raw_chart, chart_source = fetch_chart_quotes(selected, start, date.today().isoformat(), interval=timeframe)
-            st.caption(f"Nguồn dữ liệu biểu đồ: {chart_source}. Bộ lọc khối lượng dùng bình quân 20 phiên.")
-            clean_chart, chart_warning = sanitize_daily_chart_bars(raw_chart)
+            end = date.today().isoformat()
+            if selected in COMPARE_INDICES:
+                clean_chart, chart_source = fetch_index_chart_quotes(COMPARE_INDICES[selected], start, end)
+                chart_warning = None
+            else:
+                raw_chart, chart_source = fetch_chart_quotes(selected, start, end, interval=timeframe)
+                clean_chart, chart_warning = sanitize_daily_chart_bars(raw_chart)
+            st.caption(f"Nguồn dữ liệu biểu đồ: {chart_source}.")
             if chart_warning:
                 st.warning(chart_warning)
             chart = add_indicators(clean_chart)
@@ -456,7 +461,8 @@ def render_stock_dashboard():
             else:
                 last = chart.iloc[-1]
                 p1, p2, p3, p4, p5 = st.columns(5)
-                p1.metric("Giá đóng cửa", f"{last['close']:,.2f}")
+                close_label = "Điểm đóng cửa" if selected in COMPARE_INDICES else "Giá đóng cửa"
+                p1.metric(close_label, f"{last['close']:,.2f}")
                 p2.metric("MOM10 (FireAnt)", f"{last['MOM10']:.2f}" if pd.notna(last["MOM10"]) else "—")
                 p3.metric("ROC14", f"{last['ROC14']:.2f}%" if pd.notna(last["ROC14"]) else "—")
                 p4.metric("RSI14", f"{last['RSI14']:.1f}" if pd.notna(last["RSI14"]) else "—")
@@ -467,15 +473,14 @@ def render_stock_dashboard():
         except Exception as exc:
             st.error(f"Không tải được biểu đồ {selected}: {exc}")
 
-        st.subheader("Đối chiếu các mã đã nhập")
-        if not chart_symbols:
-            st.info("Nhập ít nhất một mã cổ phiếu để xem đối chiếu.")
-        else:
-            comparison = result[result["Mã"].astype(str).str.upper().isin(chart_symbols)].copy()
+        stock_symbols = [symbol for symbol in chart_symbols if symbol not in COMPARE_INDICES]
+        if stock_symbols:
+            st.subheader("Đối chiếu các mã cổ phiếu đã nhập")
+            comparison = result[result["Mã"].astype(str).str.upper().isin(stock_symbols)].copy()
             if comparison.empty:
                 st.warning("Chưa có dữ liệu quét cho các mã vừa nhập. Kiểm tra lại mã hoặc cập nhật dữ liệu thị trường.")
             else:
-                order = {symbol: index for index, symbol in enumerate(chart_symbols)}
+                order = {symbol: index for index, symbol in enumerate(stock_symbols)}
                 comparison["_order"] = comparison["Mã"].map(order)
                 comparison = comparison.sort_values("_order").drop(columns=["_order"])
                 st.dataframe(
@@ -483,7 +488,7 @@ def render_stock_dashboard():
                     use_container_width=True,
                     hide_index=True,
                 )
-            missing_symbols = [symbol for symbol in chart_symbols if symbol not in set(comparison["Mã"].astype(str).str.upper())]
+            missing_symbols = [symbol for symbol in stock_symbols if symbol not in set(comparison["Mã"].astype(str).str.upper())]
             if missing_symbols:
                 st.caption("Chưa có dữ liệu đối chiếu cho: " + ", ".join(missing_symbols))
 
