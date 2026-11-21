@@ -85,7 +85,7 @@ def render_lightweight_chart(chart: pd.DataFrame, symbol: str, timeframe: str = 
     volume_sma10 = ichipoints(chart["volume"].rolling(10).mean())
     payload = json.dumps({"candles": candles, "volume": volume, "volumeSma10": volume_sma10,
                           "overlays": {k: points(k) for k in ("EMA7", "SMA20", "EMA20", "EMA50", "EMA100")},
-                          "rsi": points("RSI14"), "macd": points("MACD"),
+                          "rsi": points("RSI14"), "macd": points("MACD"), "mom": points("MOM10"),
                           "signal": points("MACD_SIGNAL"), "hist": points("MACD_HIST"),
                           "symbol": symbol, "barUnit": "phiên" if timeframe == "1D" else "nến",
                           "ichimoku": ichimoku, "bollinger": bollinger,
@@ -158,8 +158,10 @@ const stochasticLines=Object.entries(data.stochastic).map(([name,points],i)=>{
     series.setData(points);
     return [name,series];
 });
+const mom=osc.addLineSeries({color:'#69c6f0',lineWidth:2,priceLineVisible:false,visible:false});
+mom.setData(data.mom);
 const stochasticMode='Stochastic thử';
-const modes={RSI:[rsi,rsi30,rsi70],MACD:[macd,signal,hist],
+const modes={RSI:[rsi,rsi30,rsi70],MACD:[macd,signal,hist],MOM:[mom],
     [stochasticMode]:[stochasticBars,...stochasticLines.map(([,series])=>series)]};
 const candleFocusSeries=new Set([stochasticBars,...stochasticLines
     .filter(([name])=>name==='Biên trên'||name==='Biên dưới').map(([,series])=>series)]);
@@ -225,11 +227,11 @@ const volumeAverageByDate=indexByDate(data.volumeSma10);
 const valueSeries=Object.fromEntries(Object.entries({
     ...data.overlays,...data.ichimoku,
     'BB trên':data.bollinger.upper,'BB giữa':data.bollinger.middle,'BB dưới':data.bollinger.lower,
-    RSI:data.rsi,MACD:data.macd,Signal:data.signal,Histogram:data.hist,...data.stochastic
+    RSI:data.rsi,MACD:data.macd,Signal:data.signal,Histogram:data.hist,MOM:data.mom,...data.stochastic
 }).map(([name,points])=>[name,indexByDate(points)]));
 const displayPrice=Object.entries(overlay).concat(Object.entries(ichi),
     ['BB trên','BB giữa','BB dưới'].map((name,i)=>[name,bbSeries[i]]));
-const displayOsc={RSI:[['RSI',rsi]],MACD:[['MACD',macd],['Signal',signal],['Histogram',hist]],
+const displayOsc={RSI:[['RSI',rsi]],MACD:[['MACD',macd],['Signal',signal],['Histogram',hist]],MOM:[['MOM',mom]],
     [stochasticMode]:stochasticLines};
 const readouts=panes.map(([id,chart])=>{
     const root=document.getElementById(id);
