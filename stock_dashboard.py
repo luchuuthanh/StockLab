@@ -419,14 +419,24 @@ def render_stock_dashboard():
             st.dataframe(filtered_roc14[["Mã", "Sàn", "Giá đóng cửa", "MOM10 (FireAnt)", "ROC14 (%)", "EMA100", "Khối lượng", "KLGD TB20", "Ngày dữ liệu"]], use_container_width=True, hide_index=True)
             st.download_button("Tải CSV ROC14", filtered_roc14.to_csv(index=False).encode("utf-8-sig"), "co_phieu_ROC14_dat_nguong.csv", "text/csv")
 
+    available_symbols = sorted({
+        str(symbol).strip().upper()
+        for symbol in result["Mã"].dropna()
+        if str(symbol).strip()
+    })
+    index_codes = set(COMPARE_INDICES.values())
+    symbol_options = [*COMPARE_INDICES, *(
+        symbol for symbol in available_symbols if symbol.replace("-", "") not in index_codes
+    )]
+
     with tab_chart:
-        # Text entry works better than a long native selectbox on mobile.
-        symbols_text = st.text_input(
-            "Nhập mã cổ phiếu hoặc chỉ số",
-            value="AAM",
-            placeholder="Ví dụ: VN-Index, VN30, FPT",
-            help="Có thể nhập nhiều mã, ngăn cách bằng dấu phẩy hoặc dấu chấm phẩy.",
-            key="stocklab_chart_symbols",
+        selected_symbols = st.multiselect(
+            "Tìm mã cổ phiếu hoặc chỉ số", symbol_options,
+            default=["AAM"] if "AAM" in symbol_options else [],
+            placeholder="Gõ chữ đầu của mã, ví dụ F hoặc VN",
+            help="Chọn một hoặc nhiều mã. Mã đầu tiên sẽ hiện trên biểu đồ.",
+            accept_new_options=True, filter_mode="prefix",
+            key="stocklab_chart_symbol_picker",
         )
         chart_day_options = [260, 365, 520, 730]
         chart_days = st.selectbox(
@@ -437,7 +447,7 @@ def render_stock_dashboard():
         )
         index_labels = {code: label for label, code in COMPARE_INDICES.items()}
         chart_symbols = []
-        for item in symbols_text.replace(";", ",").split(","):
+        for item in selected_symbols:
             symbol = item.strip().upper()
             symbol = index_labels.get(symbol.replace("-", ""), symbol)
             if symbol and symbol not in chart_symbols:
@@ -501,27 +511,18 @@ def render_stock_dashboard():
         st.subheader("So sánh hai cổ phiếu · Nến Nhật")
         # Searchable symbol selectors: Streamlit filters options while typing,
         # including on mobile. Keep the market index available as an option.
-        available_symbols = sorted({
-            str(symbol).strip().upper()
-            for symbol in result["Mã"].dropna()
-            if str(symbol).strip()
-        })
-        index_codes = set(COMPARE_INDICES.values())
-        compare_symbols = [*COMPARE_INDICES, *(
-            symbol for symbol in available_symbols if symbol.replace("-", "") not in index_codes
-        )]
         col_a, col_b = st.columns(2)
         with col_a:
             ticker_a = st.selectbox(
-                "Mã khung trên", compare_symbols,
-                index=compare_symbols.index("FPT") if "FPT" in compare_symbols else 0,
+                "Mã khung trên", symbol_options,
+                index=symbol_options.index("FPT") if "FPT" in symbol_options else 0,
                 key="compare_ticker_a_search",
                 help="Chạm vào ô và gõ vài chữ đầu của mã để lọc danh sách.",
             )
         with col_b:
             ticker_b = st.selectbox(
-                "Mã khung dưới", compare_symbols,
-                index=compare_symbols.index("HPG") if "HPG" in compare_symbols else 0,
+                "Mã khung dưới", symbol_options,
+                index=symbol_options.index("HPG") if "HPG" in symbol_options else 0,
                 key="compare_ticker_b_search",
                 help="Chạm vào ô và gõ vài chữ đầu của mã để lọc danh sách.",
             )
