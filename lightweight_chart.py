@@ -129,20 +129,24 @@ def render_lightweight_chart(chart: pd.DataFrame, symbol: str, timeframe: str = 
                           "stochasticMarkers": stochastic_trade_markers(stochastic, dates)}, ensure_ascii=True).replace("</", "<\\/")
     html = """<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
 <style>html,body{margin:0;background:#101722;color:#e4eaf2;font:13px system-ui,sans-serif}
-#toolbar,#osc-tools{display:flex;align-items:center;gap:6px;overflow-x:auto;padding:8px;white-space:nowrap}
-#osc-tools{margin:4px 8px;border:1px solid #415168;border-radius:8px;background:#172233}
-#osc-tools button{flex:none;min-height:44px}
-#candle-focus[hidden]{display:none}
+#toolbar{display:flex;align-items:center;gap:6px;overflow-x:auto;padding:8px;white-space:nowrap}
+.indicator-header{display:flex;align-items:center;justify-content:space-between;gap:8px;height:36px;padding:0 8px;background:#172233}
+.indicator-header h2{margin:0;font-size:13px}
+#candle-focus{padding:5px 9px}
+#error:empty{display:none}
 button{background:#263446;color:#e4eaf2;border:1px solid #415168;border-radius:7px;padding:9px 12px}
 button.active{background:#186b7c;border-color:#32c7c5}#status{padding:4px 10px;min-height:18px;color:#b5c7d8}
-#price{height:410px}#volume{height:90px}#osc{height:220px}#error{padding:12px;color:#f6bd60}
-#price,#volume,#osc{position:relative}
+#price{height:410px}#volume{height:90px}#error{padding:12px;color:#f6bd60}
+#price,#volume,.indicator-chart{position:relative}
 .session-line,.session-values{position:absolute;z-index:2;pointer-events:none}
 .session-line{top:0;bottom:0;border-left:1px dashed #d7e0ed}
-#price .session-line,#osc .session-line{bottom:26px}
+#price .session-line,.indicator-chart .session-line{bottom:26px}
 .session-values{top:4px;left:6px;max-width:calc(100% - 90px);padding:4px 6px;border-radius:4px;background:#101722ee;color:#edf3fb;line-height:1.35;font-size:12px}
 </style></head><body><div id="toolbar"></div><div id="status">Chạm vào nến để xem giá · Vuốt để xem lịch sử · Chụm hai ngón để thu phóng</div>
-<div id="price"></div><div id="volume"></div><div id="osc-tools" role="group" aria-label="Công cụ khung chỉ báo"><button id="candle-focus" type="button" aria-pressed="false" hidden>Chỉ xem nến</button></div><div id="osc"></div><div id="error"></div>
+<div id="price"></div><div id="volume"></div>
+<section id="indicator-1" aria-labelledby="indicator-title-1"><div class="indicator-header"><h2 id="indicator-title-1"></h2><button id="candle-focus" type="button" aria-pressed="false" hidden>Chỉ xem nến</button></div><div class="indicator-chart" id="osc"></div></section>
+<section id="indicator-2" aria-labelledby="indicator-title-2" hidden><div class="indicator-header"><h2 id="indicator-title-2"></h2></div><div class="indicator-chart" id="osc-2"></div></section>
+<div id="error"></div>
 <script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
 <script>
 const data=__DATA__;
@@ -173,63 +177,102 @@ vol.addHistogramSeries({priceFormat:{type:'volume'},priceScaleId:'right',priceLi
 const volumeAverage=vol.addLineSeries({color:'#f8d05a',lineWidth:2,priceFormat:{type:'volume'},
     priceLineVisible:false,lastValueVisible:false});
 volumeAverage.setData(data.volumeSma10);
-const osc=L.createChart(document.getElementById('osc'),{...base,width:Math.max(320,document.getElementById('osc').clientWidth),height:220});
-const rsi=osc.addLineSeries({color:'#dba5ff',lineWidth:2,priceLineVisible:false});rsi.setData(data.rsi);
-const rsi30=osc.addLineSeries({color:'#f59e0b',lineWidth:1,lineStyle:2,priceLineVisible:false,lastValueVisible:false});
-const rsi70=osc.addLineSeries({color:'#f59e0b',lineWidth:1,lineStyle:2,priceLineVisible:false,lastValueVisible:false});
-rsi30.setData(data.rsi.map(p=>({time:p.time,value:30})));
-rsi70.setData(data.rsi.map(p=>({time:p.time,value:70})));
-const macd=osc.addLineSeries({color:'#36c6e9',lineWidth:2,priceLineVisible:false});macd.setData(data.macd);
-const signal=osc.addLineSeries({color:'#f8d05a',lineWidth:2,priceLineVisible:false});signal.setData(data.signal);
-const hist=osc.addHistogramSeries({color:'#5aa59c',priceLineVisible:false});hist.setData(data.hist);
-const stochasticBars=osc.addCandlestickSeries({
-    upColor:'#32d981',downColor:'#ff6068',wickVisible:false,borderVisible:false,
-    priceLineVisible:false,lastValueVisible:false,visible:false
-});
-stochasticBars.setData(data.stochasticBars);
-stochasticBars.setMarkers(data.stochasticMarkers);
-const stochasticColors=['#f3f5fa','#48da87','#fce06a','#ff646a','#ec91ad','#69aaff'];
-const stochasticLines=Object.entries(data.stochastic).map(([name,points],i)=>{
-    const series=osc.addLineSeries({
-        color:stochasticColors[i],lineWidth:1,lineStyle:i<4?0:2,
+const stochasticMode='Bộ chỉ báo mua bán';
+const candleFocus=document.getElementById('candle-focus');
+function createIndicatorPane(id, sectionId, titleId){
+    const root=document.getElementById(id);
+    const title=document.getElementById(titleId);
+    const section=document.getElementById(sectionId);
+    const osc=L.createChart(root,{...base,width:Math.max(320,root.clientWidth),height:220});
+    const rsi=osc.addLineSeries({color:'#dba5ff',lineWidth:2,priceLineVisible:false});rsi.setData(data.rsi);
+    const rsi30=osc.addLineSeries({color:'#f59e0b',lineWidth:1,lineStyle:2,priceLineVisible:false,lastValueVisible:false});
+    const rsi70=osc.addLineSeries({color:'#f59e0b',lineWidth:1,lineStyle:2,priceLineVisible:false,lastValueVisible:false});
+    rsi30.setData(data.rsi.map(p=>({time:p.time,value:30})));
+    rsi70.setData(data.rsi.map(p=>({time:p.time,value:70})));
+    const macd=osc.addLineSeries({color:'#36c6e9',lineWidth:2,priceLineVisible:false});macd.setData(data.macd);
+    const signal=osc.addLineSeries({color:'#f8d05a',lineWidth:2,priceLineVisible:false});signal.setData(data.signal);
+    const hist=osc.addHistogramSeries({color:'#5aa59c',priceLineVisible:false});hist.setData(data.hist);
+    const stochasticBars=osc.addCandlestickSeries({
+        upColor:'#32d981',downColor:'#ff6068',wickVisible:false,borderVisible:false,
         priceLineVisible:false,lastValueVisible:false,visible:false
     });
-    series.setData(points);
-    return [name,series];
-});
-const mom=osc.addLineSeries({color:'#69c6f0',lineWidth:2,priceLineVisible:false,visible:false});
-mom.setData(data.mom);
-const stochasticMode='Bộ chỉ báo mua bán';
-const modes={RSI:[rsi,rsi30,rsi70],MACD:[macd,signal,hist],MOM:[mom],
-    [stochasticMode]:[stochasticBars,...stochasticLines.map(([,series])=>series)]};
-const candleFocusSeries=new Set([stochasticBars,...stochasticLines
-    .filter(([name])=>name==='Biên trên'||name==='Biên dưới').map(([,series])=>series)]);
-let current='RSI';
-const oscTools=document.getElementById('osc-tools');
-const candleFocus=document.getElementById('candle-focus');
-function setMode(name){
-    current=name;
-    const stochasticActive=name===stochasticMode;
-    const candlesOnly=stochasticActive&&candleFocus.getAttribute('aria-pressed')==='true';
-    for(const [key,series] of Object.entries(modes)){
-        for(const item of series){
-            item.applyOptions({visible:key===name&&(!candlesOnly||candleFocusSeries.has(item))});
-        }
+    stochasticBars.setData(data.stochasticBars);
+    stochasticBars.setMarkers(data.stochasticMarkers);
+    const stochasticColors=['#f3f5fa','#48da87','#fce06a','#ff646a','#ec91ad','#69aaff'];
+    const stochasticLines=Object.entries(data.stochastic).map(([name,points],i)=>{
+        const series=osc.addLineSeries({
+            color:stochasticColors[i],lineWidth:1,lineStyle:i<4?0:2,
+            priceLineVisible:false,lastValueVisible:false,visible:false
+        });
+        series.setData(points);
+        return [name,series];
+    });
+    const mom=osc.addLineSeries({color:'#69c6f0',lineWidth:2,priceLineVisible:false,visible:false});
+    mom.setData(data.mom);
+    const modes={RSI:[rsi,rsi30,rsi70],MACD:[macd,signal,hist],MOM:[mom],
+        [stochasticMode]:[stochasticBars,...stochasticLines.map(([,series])=>series)]};
+    const candleFocusSeries=new Set([stochasticBars,...stochasticLines
+        .filter(([name])=>name==='Biên trên'||name==='Biên dưới').map(([,series])=>series)]);
+    const display={RSI:[['RSI',rsi]],MACD:[['MACD',macd],['Signal',signal],['Histogram',hist]],
+        MOM:[['MOM',mom]],[stochasticMode]:stochasticLines};
+    return {id,root,title,section,chart:osc,modes,display,candleFocusSeries};
+}
+const indicatorPanes=[
+    createIndicatorPane('osc','indicator-1','indicator-title-1'),
+    createIndicatorPane('osc-2','indicator-2','indicator-title-2')
+];
+const selectedModes=['RSI'];
+const buttons=new Map();
+function renderIndicators(){
+    const range=price.timeScale().getVisibleLogicalRange();
+    const candlesOnly=candleFocus.getAttribute('aria-pressed')==='true';
+    rangeUpdateInProgress=true;
+    try {
+        indicatorPanes.forEach((pane,i)=>{
+            const mode=selectedModes[i];
+            pane.section.hidden=!mode;
+            if(!mode)return;
+            const stochasticActive=mode===stochasticMode;
+            pane.title.textContent=mode;
+            if(stochasticActive)pane.title.parentElement.appendChild(candleFocus);
+            for(const [name,series] of Object.entries(pane.modes)){
+                for(const item of series){
+                    item.applyOptions({visible:name===mode&&(!stochasticActive||!candlesOnly||pane.candleFocusSeries.has(item))});
+                }
+            }
+            pane.chart.applyOptions({width:pane.root.clientWidth||320,height:selectedModes.length===2?220:476});
+            pane.chart.priceScale('right').applyOptions({autoScale:true});
+            if(range)pane.chart.timeScale().setVisibleLogicalRange(range);
+        });
+    } finally {
+        rangeUpdateInProgress=false;
     }
-    candleFocus.hidden=!stochasticActive;
-    document.querySelectorAll('[data-mode]').forEach(button=>{
-        const selected=button.dataset.mode===name;
+    candleFocus.hidden=!selectedModes.includes(stochasticMode);
+    for(const [name,button] of buttons){
+        const selected=selectedModes.includes(name);
         button.classList.toggle('active',selected);
         button.setAttribute('aria-pressed',String(selected));
-    });
+    }
+}
+function toggleMode(name){
+    const index=selectedModes.indexOf(name);
+    if(index!==-1){
+        if(selectedModes.length===1)return;
+        selectedModes.splice(index,1);
+    } else if(selectedModes.length===2){
+        selectedModes[1]=name;
+    } else {
+        selectedModes.push(name);
+    }
+    renderIndicators();
 }
 candleFocus.onclick=()=>{
     const active=candleFocus.getAttribute('aria-pressed')!=='true';
     candleFocus.setAttribute('aria-pressed',String(active));
     candleFocus.classList.toggle('active',active);
     candleFocus.textContent=active?'Hiện lại các đường':'Chỉ xem nến';
-    osc.priceScale('right').applyOptions({autoScale:true});
-    setMode(stochasticMode);
+    renderIndicators();
+    drawSession();
 };
 const toolbar=document.getElementById('toolbar');
 const bbButton=document.createElement('button');
@@ -254,19 +297,15 @@ notesButton.onclick=()=>{
 toolbar.append(notesButton,bbButton);
 const ichiButton=document.createElement('button');ichiButton.textContent='Ichimoku (9,26,52)';ichiButton.onclick=()=>{const on=!ichiButton.classList.contains('active');ichiButton.classList.toggle('active',on);for(const series of Object.values(ichi))series.applyOptions({visible:on});};toolbar.appendChild(ichiButton);
 for(const name of Object.keys(overlay)){const b=document.createElement('button');b.textContent=name;b.className=['EMA7','SMA20','EMA100'].includes(name)?'active':'';overlay[name].applyOptions({visible:b.className==='active'});b.onclick=()=>{const on=!b.classList.contains('active');b.classList.toggle('active',on);overlay[name].applyOptions({visible:on});};toolbar.appendChild(b);}
-for(const controls of [toolbar,oscTools]){
-    for(const name of Object.keys(modes)){
-        const button=document.createElement('button');
-        button.type='button';
-        button.textContent=name;
-        button.dataset.mode=name;
-        button.onclick=()=>setMode(name);
-        controls.appendChild(button);
-    }
+for(const name of Object.keys(indicatorPanes[0].modes)){
+    const button=document.createElement('button');
+    button.type='button';
+    button.textContent=name;
+    button.onclick=()=>toggleMode(name);
+    buttons.set(name,button);
+    toolbar.appendChild(button);
 }
-oscTools.appendChild(candleFocus);
-setMode('RSI');
-const panes=[['price',price],['volume',vol],['osc',osc]];
+const panes=[['price',price],['volume',vol],...indicatorPanes.map(({id,chart})=>[id,chart])];
 // Every pane needs identical logical indexes, including Ichimoku projection dates.
 const timeline=data.timeline.map(time=>({time,value:0}));
 for(const [,chart] of panes){
@@ -284,8 +323,6 @@ const valueSeries=Object.fromEntries(Object.entries({
 }).map(([name,points])=>[name,indexByDate(points)]));
 const displayPrice=Object.entries(overlay).concat(Object.entries(ichi),
     ['BB trên','BB giữa','BB dưới'].map((name,i)=>[name,bbSeries[i]]));
-const displayOsc={RSI:[['RSI',rsi]],MACD:[['MACD',macd],['Signal',signal],['Histogram',hist]],MOM:[['MOM',mom]],
-    [stochasticMode]:stochasticLines};
 const readouts=panes.map(([id,chart])=>{
     const root=document.getElementById(id);
     const line=document.createElement('div');
@@ -315,9 +352,11 @@ function drawSession(){
             ...visibleValues(displayPrice,2)].join(' · '),
         [volPoint?'Khối lượng '+qty.format(volPoint.value):'Khối lượng —',
             average?'SMA10 '+qty.format(average.value):'SMA10 —'].join(' · '),
-        [day,...(current===stochasticMode&&candleFocus.getAttribute('aria-pressed')==='true'&&valueSeries['EMA 3'].has(selectedDate)
-            ? ['Nến '+valueSeries['EMA 3'].get(selectedDate).value.toFixed(2)] : []),
-            ...visibleValues(displayOsc[current],current==='MACD'?3:2)].join(' · ')
+        ...selectedModes.map((mode,i)=>[
+            day,...(mode===stochasticMode&&candleFocus.getAttribute('aria-pressed')==='true'&&valueSeries['EMA 3'].has(selectedDate)
+                ? ['Nến '+valueSeries['EMA 3'].get(selectedDate).value.toFixed(2)] : []),
+            ...visibleValues(indicatorPanes[i].display[mode],mode==='MACD'?3:2)
+        ].join(' · '))
     ];
     readouts.forEach(({root,chart,scale,line,note},i)=>{
         const x=scale.timeToCoordinate(selectedDate);
@@ -340,7 +379,6 @@ for(const [,chart] of panes){
     chart.subscribeCrosshairMove(selectSession);
 }
 toolbar.addEventListener('click',drawSession);
-oscTools.addEventListener('click',drawSession);
 function equalRange(a,b){
     return a&&b&&Math.abs(a.from-b.from)<1e-6&&Math.abs(a.to-b.to)<1e-6;
 }
@@ -363,6 +401,7 @@ for(const scale of scales)scale.subscribeVisibleLogicalRangeChange(range=>{
     drawSession();
 });
 document.getElementById('status').textContent=data.symbol+' · '+data.candles.length+' '+data.barUnit+' · Vuốt để xem lịch sử · Chụm hai ngón để thu phóng';
+renderIndicators();
 let initialRangeApplied=false;
 const observer=new ResizeObserver(()=>{
     const range=initialRangeApplied?price.timeScale().getVisibleLogicalRange():
@@ -374,7 +413,7 @@ const observer=new ResizeObserver(()=>{
             if(width>0)chart.applyOptions({width});
             if(width>0&&range)chart.timeScale().setVisibleLogicalRange(range);
         }
-        initialRangeApplied=panes.every(([id])=>document.getElementById(id).clientWidth>0);
+        initialRangeApplied=document.getElementById('price').clientWidth>0;
     } finally {
         rangeUpdateInProgress=false;
     }
@@ -383,4 +422,4 @@ for(const [id] of panes)observer.observe(document.getElementById(id));
 } catch(e) {document.getElementById('error').textContent='Lỗi khởi tạo biểu đồ: '+(e && e.message ? e.message : String(e)); console.error(e);}
 }
 </script></body></html>""".replace("__DATA__", payload)
-    components.html(html, height=900, scrolling=False)
+    components.html(html, height=1100, scrolling=False)
