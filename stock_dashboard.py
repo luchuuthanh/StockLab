@@ -485,13 +485,10 @@ def render_stock_dashboard():
                 bar_unit = "phiên" if timeframe == "1D" else "nến"
                 first_date = clean_chart["date"].min()
                 st.caption(f"Dữ liệu thực tế: {first_date:%d/%m/%Y} đến {last['date']:%d/%m/%Y} · {len(chart):,} {bar_unit}.")
-                p1, p2, p3, p4, p5 = st.columns(5)
+                price_metric, volume_metric = st.columns(2)
                 close_label = "Điểm đóng cửa" if selected in COMPARE_INDICES else "Giá đóng cửa"
-                p1.metric(close_label, f"{last['close']:,.2f}")
-                p2.metric("MOM10 (FireAnt)", f"{last['MOM10']:.2f}" if pd.notna(last["MOM10"]) else "—")
-                p3.metric("ROC14", f"{last['ROC14']:.2f}%" if pd.notna(last["ROC14"]) else "—")
-                p4.metric("RSI14", f"{last['RSI14']:.1f}" if pd.notna(last["RSI14"]) else "—")
-                p5.metric("Khối lượng", f"{last['volume']:,.0f}")
+                price_metric.metric(close_label, f"{last['close']:,.2f}")
+                volume_metric.metric("Khối lượng", f"{last['volume']:,.0f}")
                 from lightweight_chart import render_lightweight_chart
                 render_lightweight_chart(chart, selected, timeframe=timeframe)
                 st.dataframe(chart.tail(30).sort_values("date", ascending=False), use_container_width=True, hide_index=True)
