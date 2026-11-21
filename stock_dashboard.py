@@ -419,11 +419,31 @@ def render_stock_dashboard():
 
     with tab_compare:
         st.subheader("So sánh hai cổ phiếu · Nến Nhật")
+        # Searchable symbol selectors: Streamlit filters options while typing,
+        # including on mobile. Keep the market index available as an option.
+        available_symbols = sorted({
+            str(symbol).strip().upper()
+            for symbol in result["Mã"].dropna()
+            if str(symbol).strip()
+        })
+        compare_symbols = ["VN-Index"] + [
+            symbol for symbol in available_symbols if symbol != "VN-INDEX"
+        ]
         col_a, col_b = st.columns(2)
         with col_a:
-            ticker_a = st.text_input("Mã khung trên", value="FPT", key="compare_ticker_a").strip().upper()
+            ticker_a = st.selectbox(
+                "Mã khung trên", compare_symbols,
+                index=compare_symbols.index("FPT") if "FPT" in compare_symbols else 0,
+                key="compare_ticker_a_search",
+                help="Chạm vào ô và gõ vài chữ đầu của mã để lọc danh sách.",
+            )
         with col_b:
-            ticker_b = st.text_input("Mã khung dưới", value="HPG", key="compare_ticker_b").strip().upper()
+            ticker_b = st.selectbox(
+                "Mã khung dưới", compare_symbols,
+                index=compare_symbols.index("HPG") if "HPG" in compare_symbols else 0,
+                key="compare_ticker_b_search",
+                help="Chạm vào ô và gõ vài chữ đầu của mã để lọc danh sách.",
+            )
         compare_timeframe = st.radio(
             "Khung nến", options=["1D", "2D", "3D", "1W", "1M"],
             format_func=lambda x: {"1D": "Ngày", "2D": "2 ngày", "3D": "3 ngày",
