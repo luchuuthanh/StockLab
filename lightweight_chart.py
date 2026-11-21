@@ -179,20 +179,32 @@ const price=L.createChart(document.getElementById('price'),{...base,width:Math.m
 const candleStyle={upColor:'#26a69a',downColor:'#ef5350',wickUpColor:'#26a69a',wickDownColor:'#ef5350',borderVisible:false};
 const candle=price.addCandlestickSeries(candleStyle);
 candle.setData(data.candles);
-const colors={EMA7:'#f8d05a',SMA20:'#37c3ff',EMA20:'#b48bff',EMA50:'#f59e73',EMA100:'#e5e7eb'};
-const overlay={};
-const bbSeries=Object.entries(data.bollinger).map(([band,points])=>{
-    const middle=band==='middle';
-    const series=price.addLineSeries({color:middle?'#8eb9f3':'#678ff2',
-        lineWidth:middle?1:2,lineStyle:middle?2:0,
-        priceLineVisible:false,lastValueVisible:false,visible:false});
-    series.setData(points);
-    return series;
-});
-const ichiColors={Tenkan:'#ff9d43',Kijun:'#e95bb5',SenkouA:'#29bd88',SenkouB:'#f87171',Chikou:'#9acaff'};
-const ichi={};
-for(const [name,points] of Object.entries(data.ichimoku)){const series=price.addLineSeries({color:ichiColors[name],lineWidth:2,priceLineVisible:false,lastValueVisible:false,visible:false});series.setData(points);ichi[name]=series;}
-for(const [name,points] of Object.entries(data.overlays)){const s=price.addLineSeries({color:colors[name],lineWidth:2,priceLineVisible:false,lastValueVisible:true});s.setData(points);overlay[name]=s;}
+const averageColors={EMA7:'#f8d05a',SMA20:'#37c3ff',EMA20:'#b48bff',EMA50:'#f59e73',EMA100:'#e5e7eb'};
+const ichimokuColors={Tenkan:'#ff9d43',Kijun:'#e95bb5',SenkouA:'#29bd88',SenkouB:'#f87171',Chikou:'#9acaff'};
+const ichimokuLabel='Ichimoku (9,26,52)';
+const bandLabels={upper:'BB trên',middle:'BB giữa',lower:'BB dưới'};
+const enabledPriceOverlays=new Set(['EMA7','SMA20','EMA100']);
+function createPriceOverlays(chart){
+    function addLine(name,points,options){
+        const series=chart.addLineSeries({lineWidth:2,priceLineVisible:false,
+            lastValueVisible:false,visible:false,...options});
+        series.setData(points);
+        return [name,series];
+    }
+    return {
+        BB:Object.entries(data.bollinger).map(([band,points])=>{
+            const middle=band==='middle';
+            return addLine(bandLabels[band],points,{color:middle?'#8eb9f3':'#678ff2',
+                lineWidth:middle?1:2,lineStyle:middle?2:0});
+        }),
+        [ichimokuLabel]:Object.entries(data.ichimoku).map(([name,points])=>
+            addLine(name,points,{color:ichimokuColors[name]})),
+        ...Object.fromEntries(Object.entries(data.overlays).map(([name,points])=>[
+            name,[addLine(name,points,{color:averageColors[name],lastValueVisible:true})]
+        ]))
+    };
+}
+const priceOverlays=createPriceOverlays(price);
 const vol=L.createChart(document.getElementById('volume'),{...base,width:Math.max(320,document.getElementById('volume').clientWidth),height:chartSizes().volume,timeScale:{...base.timeScale,visible:false}});
 vol.addHistogramSeries({priceFormat:{type:'volume'},priceScaleId:'right',priceLineVisible:false,lastValueVisible:false}).setData(data.volume);
 const volumeAverage=vol.addLineSeries({color:'#f8d05a',lineWidth:2,priceFormat:{type:'volume'},
@@ -253,7 +265,8 @@ function createIndicatorPane(id, sectionId, titleId){
         .filter(([name])=>name==='Biên trên'||name==='Biên dưới').map(([,series])=>series)]);
     const display={RSI:[['RSI',rsi]],MACD:[['MACD',macd],['Signal',signal],['Histogram',hist]],
         MOM:[['MOM',mom]],[stochasticMode]:stochasticLines};
-    return {id,root,title,section,chart:osc,modes,display,candleFocusSeries};
+    return {id,root,title,section,chart:osc,modes,display,candleFocusSeries,
+        priceOverlays:createPriceOverlays(osc)};
 }
 const indicatorPanes=[
     createIndicatorPane('osc','indicator-1','indicator-title-1'),
@@ -261,6 +274,18 @@ const indicatorPanes=[
 ];
 const selectedModes=['RSI','MACD'];
 const buttons=new Map();
+function syncPriceOverlays(){
+    function applyVisibility(groups,active){
+        for(const [name,lines] of Object.entries(groups)){
+            const visible=active&&enabledPriceOverlays.has(name);
+            for(const [,series] of lines)series.applyOptions({visible});
+        }
+    }
+    applyVisibility(priceOverlays,true);
+    indicatorPanes.forEach((pane,i)=>{
+        applyVisibility(pane.priceOverlays,selectedModes[i]===heikinAshiMode);
+    });
+}
 function resizeChartPanes(){
     const {price:priceHeight,volume:volumeHeight,indicator,header}=chartSizes();
     const lastIndicator=selectedModes.length-1;
@@ -302,6 +327,7 @@ function renderIndicators(){
             }
             pane.chart.priceScale('right').applyOptions({autoScale:true});
         });
+        syncPriceOverlays();
         resizeChartPanes();
         if(range){
             for(const [,chart] of panes)chart.timeScale().setVisibleLogicalRange(range);
@@ -337,16 +363,6 @@ candleFocus.onclick=()=>{
     drawSession();
 };
 const toolbar=document.getElementById('toolbar');
-const bbButton=document.createElement('button');
-bbButton.textContent='BB';
-bbButton.title='Bollinger Bands (20, 2)';
-bbButton.setAttribute('aria-pressed','false');
-bbButton.onclick=()=>{
-    const on=bbButton.getAttribute('aria-pressed')!=='true';
-    bbButton.setAttribute('aria-pressed',String(on));
-    bbButton.classList.toggle('active',on);
-    for(const series of bbSeries)series.applyOptions({visible:on});
-};
 const notesButton=document.createElement('button');
 notesButton.textContent='Chú thích';
 notesButton.classList.add('active');
@@ -356,9 +372,26 @@ notesButton.onclick=()=>{
     notesButton.setAttribute('aria-pressed',String(on));
     notesButton.classList.toggle('active',on);
 };
-toolbar.append(notesButton,bbButton);
-const ichiButton=document.createElement('button');ichiButton.textContent='Ichimoku (9,26,52)';ichiButton.onclick=()=>{const on=!ichiButton.classList.contains('active');ichiButton.classList.toggle('active',on);for(const series of Object.values(ichi))series.applyOptions({visible:on});};toolbar.appendChild(ichiButton);
-for(const name of Object.keys(overlay)){const b=document.createElement('button');b.textContent=name;b.className=['EMA7','SMA20','EMA100'].includes(name)?'active':'';overlay[name].applyOptions({visible:b.className==='active'});b.onclick=()=>{const on=!b.classList.contains('active');b.classList.toggle('active',on);overlay[name].applyOptions({visible:on});};toolbar.appendChild(b);}
+toolbar.appendChild(notesButton);
+for(const name of Object.keys(priceOverlays)){
+    const button=document.createElement('button');
+    button.type='button';
+    button.textContent=name;
+    if(name==='BB')button.title='Bollinger Bands (20, 2)';
+    const updateButton=()=>{
+        const enabled=enabledPriceOverlays.has(name);
+        button.classList.toggle('active',enabled);
+        button.setAttribute('aria-pressed',String(enabled));
+    };
+    button.onclick=()=>{
+        if(enabledPriceOverlays.has(name))enabledPriceOverlays.delete(name);
+        else enabledPriceOverlays.add(name);
+        updateButton();
+        syncPriceOverlays();
+    };
+    updateButton();
+    toolbar.appendChild(button);
+}
 for(const name of Object.keys(indicatorPanes[0].modes)){
     const button=document.createElement('button');
     button.type='button';
@@ -384,8 +417,10 @@ const valueSeries=Object.fromEntries(Object.entries({
     'BB trên':data.bollinger.upper,'BB giữa':data.bollinger.middle,'BB dưới':data.bollinger.lower,
     RSI:data.rsi,MACD:data.macd,Signal:data.signal,Histogram:data.hist,MOM:data.mom,...data.stochastic
 }).map(([name,points])=>[name,indexByDate(points)]));
-const displayPrice=Object.entries(overlay).concat(Object.entries(ichi),
-    ['BB trên','BB giữa','BB dưới'].map((name,i)=>[name,bbSeries[i]]));
+function overlayValues(overlays){
+    const {BB,[ichimokuLabel]:ichimoku,...averages}=overlays;
+    return visibleValues([...Object.values(averages).flat(),...ichimoku,...BB],2);
+}
 const readouts=panes.map(([id,chart])=>{
     const root=document.getElementById(id);
     const line=document.createElement('div');
@@ -415,11 +450,11 @@ function drawSession(){
     const day=selectedDate.split('-').reverse().join('/');
     const notes=[
         [day,...candleValues(bar),
-            ...visibleValues(displayPrice,2)].join(' · '),
+            ...overlayValues(priceOverlays)].join(' · '),
         [volPoint?'Khối lượng '+qty.format(volPoint.value):'Khối lượng —',
             average?'SMA10 '+qty.format(average.value):'SMA10 —'].join(' · '),
         ...selectedModes.map((mode,i)=>mode===heikinAshiMode
-            ? [day,...candleValues(heikinAshiByDate.get(selectedDate))].join(' · ')
+            ? [day,...candleValues(heikinAshiByDate.get(selectedDate)),...overlayValues(indicatorPanes[i].priceOverlays)].join(' · ')
             : [
             day,...(mode===stochasticMode&&candleFocus.getAttribute('aria-pressed')==='true'&&valueSeries['EMA 3'].has(selectedDate)
                 ? ['Nến '+valueSeries['EMA 3'].get(selectedDate).value.toFixed(2)] : []),
