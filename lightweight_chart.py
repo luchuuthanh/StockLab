@@ -217,7 +217,7 @@ const readouts=panes.map(([id,chart])=>{
     note.className='session-values';
     line.hidden=note.hidden=true;
     root.append(line,note);
-    return {scale:chart.timeScale(),line,note};
+    return {root,chart,scale:chart.timeScale(),line,note};
 });
 const qty=new Intl.NumberFormat('vi-VN');
 let selectedDate;
@@ -240,9 +240,9 @@ function drawSession(){
             ? ['Nến '+valueSeries['EMA 3'].get(selectedDate).value.toFixed(2)] : []),
             ...visibleValues(displayOsc[current],current==='MACD'?3:2)].join(' · ')
     ];
-    readouts.forEach(({scale,line,note},i)=>{
+    readouts.forEach(({root,chart,scale,line,note},i)=>{
         const x=scale.timeToCoordinate(selectedDate);
-        const inView=x!==null&&x>=0&&x<scale.width();
+        const inView=x!==null&&x>=0&&x<root.clientWidth-chart.priceScale('right').width();
         line.hidden=note.hidden=!inView;
         if(inView){
             line.style.left=x+'px';
