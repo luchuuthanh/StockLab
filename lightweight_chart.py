@@ -4,6 +4,25 @@ import pandas as pd
 import streamlit.components.v1 as components
 
 
+def calculate_stochastic_trial(chart: pd.DataFrame) -> pd.DataFrame:
+    """Calculate the trial oscillator from chronological OHLC bars."""
+    high = chart["high"].rolling(14).max()
+    low = chart["low"].rolling(14).min()
+    spread = high - low
+    raw = (100 * (chart["close"] - low) / spread.where(spread > 0)).clip(0, 100)
+    green = raw.ewm(span=3, adjust=False).mean().where(raw.notna())
+    yellow = green.ewm(span=3, adjust=False).mean().where(green.notna())
+    red = yellow.ewm(span=9, adjust=False).mean().where(yellow.notna())
+    return pd.DataFrame({
+        "%K thô": raw,
+        "EMA 3": green,
+        "EMA 3 lần hai": yellow,
+        "EMA 9": red,
+        "Biên trên": green.rolling(60).quantile(0.9),
+        "Biên dưới": green.rolling(60).quantile(0.1),
+    })
+
+
 def render_lightweight_chart(chart: pd.DataFrame, symbol: str) -> None:
     """Render interactive candles with touch navigation, volume and selectable overlays."""
     # Standard Ichimoku (9, 26, 52), with 26-period projection.
@@ -38,11 +57,23 @@ def render_lightweight_chart(chart: pd.DataFrame, symbol: str) -> None:
     volume = [{"time": row.date.strftime("%Y-%m-%d"), "value": float(row.volume),
                "color": "#26a69a88" if row.close >= row.open else "#ef535088"}
               for row in chart.itertuples(index=False) if pd.notna(row.volume)]
+    stochastic = calculate_stochastic_trial(chart)
+    stochastic_bars = []
+    green = stochastic["EMA 3"]
+    for day, previous, current in zip(dates, green.shift(), green):
+        bar = {"time": day.strftime("%Y-%m-%d")}
+        if pd.notna(previous) and pd.notna(current):
+            bar.update(open=round(float(previous), 6), close=round(float(current), 6),
+                       high=round(float(max(previous, current)), 6),
+                       low=round(float(min(previous, current)), 6))
+        stochastic_bars.append(bar)
     payload = json.dumps({"candles": candles, "volume": volume,
                           "overlays": {k: points(k) for k in ("EMA7", "SMA20", "EMA20", "EMA50", "EMA100")},
                           "rsi": points("RSI14"), "macd": points("MACD"),
                           "signal": points("MACD_SIGNAL"), "hist": points("MACD_HIST"),
-                          "symbol": symbol, "ichimoku": ichimoku}, ensure_ascii=True).replace("</", "<\\/")
+                          "symbol": symbol, "ichimoku": ichimoku,
+                          "stochastic": {name: ichipoints(values) for name, values in stochastic.items()},
+                          "stochasticBars": stochastic_bars}, ensure_ascii=True).replace("</", "<\\/")
     html = """<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
 <style>html,body{margin:0;background:#101722;color:#e4eaf2;font:13px system-ui,sans-serif}
 #toolbar{display:flex;gap:6px;overflow-x:auto;padding:8px;white-space:nowrap}
@@ -79,19 +110,44 @@ rsi70.setData(data.rsi.map(p=>({time:p.time,value:70})));
 const macd=osc.addLineSeries({color:'#36c6e9',lineWidth:2,priceLineVisible:false});macd.setData(data.macd);
 const signal=osc.addLineSeries({color:'#f8d05a',lineWidth:2,priceLineVisible:false});signal.setData(data.signal);
 const hist=osc.addHistogramSeries({color:'#5aa59c',priceLineVisible:false});hist.setData(data.hist);
-const modes={RSI:[rsi,rsi30,rsi70],MACD:[macd,signal,hist]};
+const stochasticBars=osc.addCandlestickSeries({
+    upColor:'#23b86a',downColor:'#ef5350',wickVisible:false,borderVisible:false,
+    priceLineVisible:false,lastValueVisible:false,visible:false,
+    autoscaleInfoProvider:()=>({priceRange:{minValue:0,maxValue:100}})
+});
+stochasticBars.setData(data.stochasticBars);
+const stochasticColors=['#f3f5fa','#48da87','#fce06a','#ff646a','#ec91ad','#69aaff'];
+const stochasticLines=Object.entries(data.stochastic).map(([name,points],i)=>{
+    const series=osc.addLineSeries({
+        title:name,color:stochasticColors[i],lineWidth:i<4?2:1,lineStyle:i<4?0:2,
+        priceLineVisible:false,lastValueVisible:false,visible:false
+    });
+    series.setData(points);
+    return [name,series];
+});
+const stochasticMode='Stochastic thử';
+const modes={RSI:[rsi,rsi30,rsi70],MACD:[macd,signal,hist],
+    [stochasticMode]:[stochasticBars,...stochasticLines.map(([,series])=>series)]};
+osc.subscribeCrosshairMove(point=>{
+    if(current!==stochasticMode||!point.time)return;
+    const values=stochasticLines.flatMap(([name,series])=>{
+        const value=point.seriesData.get(series)?.value;
+        return value===undefined?[]:[name+' '+value.toFixed(2)];
+    });
+    document.getElementById('status').textContent=data.symbol+' · '+point.time+' · '+values.join(' · ');
+});
 let current='RSI';
-function setMode(name){current=name;for(const [key,series] of Object.entries(modes))for(const s of series)s.applyOptions({visible:key===name});document.querySelectorAll('[data-mode]').forEach(b=>b.classList.toggle('active',b.dataset.mode===name));osc.timeScale().fitContent();}
+function setMode(name){current=name;for(const [key,series] of Object.entries(modes))for(const s of series)s.applyOptions({visible:key===name});document.querySelectorAll('[data-mode]').forEach(b=>b.classList.toggle('active',b.dataset.mode===name));const range=price.timeScale().getVisibleLogicalRange();if(range)osc.timeScale().setVisibleLogicalRange(range);}
 const toolbar=document.getElementById('toolbar');
 const ichiButton=document.createElement('button');ichiButton.textContent='Ichimoku (9,26,52)';ichiButton.onclick=()=>{const on=!ichiButton.classList.contains('active');ichiButton.classList.toggle('active',on);for(const series of Object.values(ichi))series.applyOptions({visible:on});};toolbar.appendChild(ichiButton);
 for(const name of Object.keys(overlay)){const b=document.createElement('button');b.textContent=name;b.className=['EMA7','SMA20','EMA100'].includes(name)?'active':'';overlay[name].applyOptions({visible:b.className==='active'});b.onclick=()=>{const on=!b.classList.contains('active');b.classList.toggle('active',on);overlay[name].applyOptions({visible:on});};toolbar.appendChild(b);}
-for(const name of ['RSI','MACD']){const b=document.createElement('button');b.textContent=name;b.dataset.mode=name;b.onclick=()=>setMode(name);toolbar.appendChild(b);}
+for(const name of Object.keys(modes)){const b=document.createElement('button');b.textContent=name;b.dataset.mode=name;b.onclick=()=>setMode(name);toolbar.appendChild(b);}
 setMode('RSI');
 price.subscribeCrosshairMove(p=>{if(!p.time)return;const v=p.seriesData.get(candle);if(v)document.getElementById('status').textContent=data.symbol+' · '+p.time+' · O '+v.open+' H '+v.high+' L '+v.low+' C '+v.close;});
 let syncing=false;
 function sync(from,to){from.timeScale().subscribeVisibleLogicalRangeChange(range=>{if(!range||syncing)return;syncing=true;to.timeScale().setVisibleLogicalRange(range);syncing=false;});}
 sync(price,vol);sync(price,osc);
-price.timeScale().fitContent();vol.timeScale().fitContent();osc.timeScale().fitContent();
+price.timeScale().fitContent();
 document.getElementById('status').textContent=data.symbol+' · '+data.candles.length+' phiên · Vuốt để xem lịch sử · Chụm hai ngón để thu phóng';
 const observer=new ResizeObserver(()=>{for(const [id,c] of [['price',price],['volume',vol],['osc',osc]])c.applyOptions({width:document.getElementById(id).clientWidth});});
 for(const id of ['price','volume','osc'])observer.observe(document.getElementById(id));
@@ -99,4 +155,4 @@ setTimeout(()=>{for(const [id,c] of [['price',price],['volume',vol],['osc',osc]]
 } catch(e) {document.getElementById('error').textContent='Lỗi khởi tạo biểu đồ: '+(e && e.message ? e.message : String(e)); console.error(e);}
 }
 </script></body></html>""".replace("__DATA__", payload)
-    components.html(html, height=735, scrolling=False)
+    components.html(html, height=780, scrolling=False)
