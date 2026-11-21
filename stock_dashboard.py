@@ -420,7 +420,6 @@ def render_stock_dashboard():
             st.download_button("Tải CSV ROC14", filtered_roc14.to_csv(index=False).encode("utf-8-sig"), "co_phieu_ROC14_dat_nguong.csv", "text/csv")
 
     with tab_chart:
-        chart_days = st.session_state.get("vnstock_days", days)
         # Text entry works better than a long native selectbox on mobile.
         symbols_text = st.text_input(
             "Nhập mã cổ phiếu hoặc chỉ số",
@@ -428,6 +427,13 @@ def render_stock_dashboard():
             placeholder="Ví dụ: VN-Index, VN30, FPT",
             help="Có thể nhập nhiều mã, ngăn cách bằng dấu phẩy hoặc dấu chấm phẩy.",
             key="stocklab_chart_symbols",
+        )
+        chart_day_options = [260, 365, 520, 730]
+        chart_days = st.selectbox(
+            "Số ngày lịch sử biểu đồ", chart_day_options,
+            index=chart_day_options.index(days),
+            format_func=lambda value: f"{value} ngày",
+            key="stocklab_chart_days",
         )
         index_labels = {code: label for label, code in COMPARE_INDICES.items()}
         chart_symbols = []
@@ -442,8 +448,7 @@ def render_stock_dashboard():
             # Keep H1 unavailable until the D1 chart is fully validated in the live app.
             timeframe = "1D"
             st.caption("Đang hoàn thiện và kiểm thử biểu đồ D1. Khung H1 sẽ được mở sau.")
-            effective_days = chart_days
-            start = (date.today() - timedelta(days=effective_days)).isoformat()
+            start = (date.today() - timedelta(days=chart_days)).isoformat()
             end = date.today().isoformat()
             if selected in COMPARE_INDICES:
                 clean_chart, chart_source = fetch_index_chart_quotes(COMPARE_INDICES[selected], start, end)
