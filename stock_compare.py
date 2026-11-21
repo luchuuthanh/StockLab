@@ -4,6 +4,37 @@ import pandas as pd
 import streamlit.components.v1 as components
 
 
+def aggregate_candles(frame: pd.DataFrame, timeframe: str) -> pd.DataFrame:
+    """Resample daily OHLCV without inventing non-trading days.
+
+    2D/3D group consecutive trading sessions from the earliest available
+    session; weekly/monthly use exchange-calendar week/month boundaries.
+    The candle date is always the last actual trading session in the group.
+    """
+    if timeframe == "1D":
+        return frame.sort_values("date").drop_duplicates("date").reset_index(drop=True)
+    if timeframe not in {"2D", "3D", "1W", "1M"}:
+        raise ValueError("Khung thời gian không hợp lệ")
+    data = frame.sort_values("date").drop_duplicates("date").copy()
+    data["date"] = pd.to_datetime(data["date"]).dt.normalize()
+    if timeframe in {"2D", "3D"}:
+        # Anchor at the most recent session so the current bar contains the
+        # latest 1-3 trading sessions rather than an arbitrary old page start.
+        n = int(timeframe[0])
+        data["_bucket"] = (len(data) - 1 - pd.RangeIndex(len(data))) // n
+    else:
+        data["_bucket"] = data["date"].dt.to_period("W-FRI" if timeframe == "1W" else "M").astype(str)
+    bars = data.groupby("_bucket", sort=False).agg(
+        date=("date", "last"),
+        open=("open", "first"),
+        high=("high", "max"),
+        low=("low", "min"),
+        close=("close", "last"),
+        volume=("volume", "sum"),
+    )
+    return bars.sort_values("date").reset_index(drop=True)
+
+
 def render_stock_comparison(first: pd.DataFrame, first_symbol: str,
                             second: pd.DataFrame, second_symbol: str) -> None:
     def pack(frame):
