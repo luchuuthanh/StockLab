@@ -75,7 +75,8 @@ def render_lightweight_chart(chart: pd.DataFrame, symbol: str) -> None:
                        high=round(float(max(previous, current)), 6),
                        low=round(float(min(previous, current)), 6))
         stochastic_bars.append(bar)
-    payload = json.dumps({"candles": candles, "volume": volume,
+    volume_sma10 = ichipoints(chart["volume"].rolling(10).mean())
+    payload = json.dumps({"candles": candles, "volume": volume, "volumeSma10": volume_sma10,
                           "overlays": {k: points(k) for k in ("EMA7", "SMA20", "EMA20", "EMA50", "EMA100")},
                           "rsi": points("RSI14"), "macd": points("MACD"),
                           "signal": points("MACD_SIGNAL"), "hist": points("MACD_HIST"),
@@ -123,6 +124,9 @@ for(const [name,points] of Object.entries(data.ichimoku)){const series=price.add
 for(const [name,points] of Object.entries(data.overlays)){const s=price.addLineSeries({color:colors[name],lineWidth:2,priceLineVisible:false,lastValueVisible:true});s.setData(points);overlay[name]=s;}
 const vol=L.createChart(document.getElementById('volume'),{...base,width:Math.max(320,document.getElementById('volume').clientWidth),height:90,timeScale:{...base.timeScale,visible:false}});
 vol.addHistogramSeries({priceFormat:{type:'volume'},priceScaleId:'right',priceLineVisible:false,lastValueVisible:false}).setData(data.volume);
+const volumeAverage=vol.addLineSeries({color:'#f8d05a',lineWidth:2,priceFormat:{type:'volume'},
+    priceLineVisible:false,lastValueVisible:false});
+volumeAverage.setData(data.volumeSma10);
 const osc=L.createChart(document.getElementById('osc'),{...base,width:Math.max(320,document.getElementById('osc').clientWidth),height:220});
 const rsi=osc.addLineSeries({color:'#dba5ff',lineWidth:2,priceLineVisible:false});rsi.setData(data.rsi);
 const rsi30=osc.addLineSeries({color:'#f59e0b',lineWidth:1,lineStyle:2,priceLineVisible:false,lastValueVisible:false});
@@ -185,7 +189,16 @@ bbButton.onclick=()=>{
     bbButton.classList.toggle('active',on);
     for(const series of bbSeries)series.applyOptions({visible:on});
 };
-toolbar.appendChild(bbButton);
+const notesButton=document.createElement('button');
+notesButton.textContent='Chú thích';
+notesButton.classList.add('active');
+notesButton.setAttribute('aria-pressed','true');
+notesButton.onclick=()=>{
+    const on=notesButton.getAttribute('aria-pressed')!=='true';
+    notesButton.setAttribute('aria-pressed',String(on));
+    notesButton.classList.toggle('active',on);
+};
+toolbar.append(notesButton,bbButton);
 const ichiButton=document.createElement('button');ichiButton.textContent='Ichimoku (9,26,52)';ichiButton.onclick=()=>{const on=!ichiButton.classList.contains('active');ichiButton.classList.toggle('active',on);for(const series of Object.values(ichi))series.applyOptions({visible:on});};toolbar.appendChild(ichiButton);
 for(const name of Object.keys(overlay)){const b=document.createElement('button');b.textContent=name;b.className=['EMA7','SMA20','EMA100'].includes(name)?'active':'';overlay[name].applyOptions({visible:b.className==='active'});b.onclick=()=>{const on=!b.classList.contains('active');b.classList.toggle('active',on);overlay[name].applyOptions({visible:on});};toolbar.appendChild(b);}
 for(const name of Object.keys(modes)){const b=document.createElement('button');b.textContent=name;b.dataset.mode=name;b.onclick=()=>setMode(name);toolbar.appendChild(b);}
@@ -200,6 +213,7 @@ const scales=panes.map(([,chart])=>chart.timeScale());
 const indexByDate=points=>new Map(points.map(point=>[point.time,point]));
 const pricesByDate=indexByDate(data.candles);
 const volumeByDate=indexByDate(data.volume);
+const volumeAverageByDate=indexByDate(data.volumeSma10);
 const valueSeries=Object.fromEntries(Object.entries({
     ...data.overlays,...data.ichimoku,
     'BB trên':data.bollinger.upper,'BB giữa':data.bollinger.middle,'BB dưới':data.bollinger.lower,
@@ -231,11 +245,13 @@ function drawSession(){
     if(!selectedDate)return;
     const bar=pricesByDate.get(selectedDate);
     const volPoint=volumeByDate.get(selectedDate);
+    const average=volumeAverageByDate.get(selectedDate);
     const day=selectedDate.split('-').reverse().join('/');
     const notes=[
         [day,...['open','high','low','close'].map(key=>key[0].toUpperCase()+' '+bar[key].toFixed(2)),
             ...visibleValues(displayPrice,2)].join(' · '),
-        volPoint?'Khối lượng '+qty.format(volPoint.value):'Khối lượng —',
+        [volPoint?'Khối lượng '+qty.format(volPoint.value):'Khối lượng —',
+            average?'SMA10 '+qty.format(average.value):'SMA10 —'].join(' · '),
         [day,...(current===stochasticMode&&candleFocus.getAttribute('aria-pressed')==='true'&&valueSeries['EMA 3'].has(selectedDate)
             ? ['Nến '+valueSeries['EMA 3'].get(selectedDate).value.toFixed(2)] : []),
             ...visibleValues(displayOsc[current],current==='MACD'?3:2)].join(' · ')
@@ -243,7 +259,8 @@ function drawSession(){
     readouts.forEach(({root,chart,scale,line,note},i)=>{
         const x=scale.timeToCoordinate(selectedDate);
         const inView=x!==null&&x>=0&&x<root.clientWidth-chart.priceScale('right').width();
-        line.hidden=note.hidden=!inView;
+        line.hidden=!inView;
+        note.hidden=!inView||notesButton.getAttribute('aria-pressed')!=='true';
         if(inView){
             line.style.left=x+'px';
             note.textContent=notes[i];
