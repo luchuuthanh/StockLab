@@ -18,8 +18,8 @@ def calculate_stochastic_trial(chart: pd.DataFrame) -> pd.DataFrame:
         "EMA 3": green,
         "EMA 3 lần hai": yellow,
         "EMA 9": red,
-        "Biên trên": green.rolling(60).quantile(0.9),
-        "Biên dưới": green.rolling(60).quantile(0.1),
+        "Biên trên": pd.Series(80.0, index=chart.index),
+        "Biên dưới": pd.Series(20.0, index=chart.index),
     })
 
 
