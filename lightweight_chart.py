@@ -160,9 +160,16 @@ if(!window.LightweightCharts){document.getElementById('error').textContent='Lỗ
 else {try {
 const L=window.LightweightCharts;
 const compactScreen=window.matchMedia('(max-width: 600px)');
-const chartSizes=()=>compactScreen.matches
-    ? {price:225,volume:55,indicator:116,header:30}
-    : {price:410,volume:90,indicator:220,header:36};
+function chartSizes(){
+    if(!compactScreen.matches)return {price:410,volume:90,indicator:220,header:36};
+    const header=30;
+    const controlsHeight=document.getElementById('toolbar').offsetHeight
+        +document.getElementById('status').offsetHeight;
+    const plotHeight=Math.max(390,window.innerHeight-controlsHeight-2*header-8);
+    const price=Math.round(plotHeight*0.44);
+    const volume=Math.round(plotHeight*0.11);
+    return {price,volume,indicator:Math.floor((plotHeight-price-volume)/2),header};
+}
 const base={crosshair:{vertLine:{visible:false,labelVisible:false},horzLine:{visible:true,labelVisible:true}},layout:{background:{type:'solid',color:'#101722'},textColor:'#c8d2df'},grid:{vertLines:{color:'#1b2736'},horzLines:{color:'#1b2736'}},rightPriceScale:{borderColor:'#35465a',minimumWidth:76},timeScale:{borderColor:'#35465a',timeVisible:false},handleScroll:{mouseWheel:true,pressedMouseMove:true,horzTouchDrag:true,vertTouchDrag:false},handleScale:{mouseWheel:true,pinch:true,axisPressedMouseMove:true}};
 const price=L.createChart(document.getElementById('price'),{...base,width:Math.max(320,document.getElementById('price').clientWidth),height:chartSizes().price});
 const candle=price.addCandlestickSeries({upColor:'#26a69a',downColor:'#ef5350',wickUpColor:'#26a69a',wickDownColor:'#ef5350',borderVisible:false});
@@ -444,7 +451,7 @@ const observer=new ResizeObserver(()=>{
     }
 });
 for(const [id] of panes)observer.observe(document.getElementById(id));
-compactScreen.addEventListener('change',()=>{
+window.addEventListener('resize',()=>{
     renderIndicators();
     drawSession();
 });
@@ -456,7 +463,10 @@ compactScreen.addEventListener('change',()=>{
             <style>
                 .st-key-stocklab_technical_chart { container-type: inline-size; }
                 @container (max-width: 600px) {
-                    .st-key-stocklab_technical_chart iframe { height: 650px !important; }
+                    .st-key-stocklab_technical_chart iframe {
+                        height: 750px !important;
+                        height: clamp(650px, calc(100svh - 36px), 780px) !important;
+                    }
                 }
             </style>
         """)
