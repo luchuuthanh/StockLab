@@ -23,6 +23,35 @@ def calculate_stochastic_trial(chart: pd.DataFrame) -> pd.DataFrame:
     })
 
 
+def stochastic_trade_markers(stochastic: pd.DataFrame, dates) -> list[dict[str, str]]:
+    """Mark crossings of the oscillator candle close and the red EMA 9 line."""
+    closes = stochastic["EMA 3"]
+    red = stochastic["EMA 9"]
+    markers = []
+    ready_to_buy = False
+    holding = False
+    for day, previous, current, previous_red, current_red in zip(
+        dates, closes.shift(), closes, red.shift(), red,
+    ):
+        if pd.isna(current) or pd.isna(current_red):
+            continue
+        if not holding and current < 25:
+            ready_to_buy = True
+        if pd.isna(previous) or pd.isna(previous_red):
+            continue
+        if holding and previous >= previous_red and current < current_red and current < previous:
+            markers.append({"time": day.strftime("%Y-%m-%d"), "position": "aboveBar",
+                            "color": "#ff6068", "shape": "arrowDown", "text": "Bán"})
+            holding = False
+            ready_to_buy = current < 25
+        elif not holding and ready_to_buy and previous <= previous_red and current > current_red and current > previous:
+            markers.append({"time": day.strftime("%Y-%m-%d"), "position": "belowBar",
+                            "color": "#32d981", "shape": "arrowUp", "text": "Mua"})
+            holding = True
+            ready_to_buy = False
+    return markers
+
+
 def render_lightweight_chart(chart: pd.DataFrame, symbol: str, timeframe: str = "1D") -> None:
     """Render interactive candles with touch navigation, volume and selectable overlays."""
     # Standard Ichimoku (9, 26, 52), with 26-period projection.
@@ -91,7 +120,8 @@ def render_lightweight_chart(chart: pd.DataFrame, symbol: str, timeframe: str = 
                           "ichimoku": ichimoku, "bollinger": bollinger,
                           "timeline": [day.strftime("%Y-%m-%d") for day in projected_dates],
                           "stochastic": {name: ichipoints(values) for name, values in stochastic.items()},
-                          "stochasticBars": stochastic_bars}, ensure_ascii=True).replace("</", "<\\/")
+                          "stochasticBars": stochastic_bars,
+                          "stochasticMarkers": stochastic_trade_markers(stochastic, dates)}, ensure_ascii=True).replace("</", "<\\/")
     html = """<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
 <style>html,body{margin:0;background:#101722;color:#e4eaf2;font:13px system-ui,sans-serif}
 #toolbar{display:flex;gap:6px;overflow-x:auto;padding:8px;white-space:nowrap}
@@ -149,6 +179,7 @@ const stochasticBars=osc.addCandlestickSeries({
     priceLineVisible:false,lastValueVisible:false,visible:false
 });
 stochasticBars.setData(data.stochasticBars);
+stochasticBars.setMarkers(data.stochasticMarkers);
 const stochasticColors=['#f3f5fa','#48da87','#fce06a','#ff646a','#ec91ad','#69aaff'];
 const stochasticLines=Object.entries(data.stochastic).map(([name,points],i)=>{
     const series=osc.addLineSeries({
@@ -160,7 +191,7 @@ const stochasticLines=Object.entries(data.stochastic).map(([name,points],i)=>{
 });
 const mom=osc.addLineSeries({color:'#69c6f0',lineWidth:2,priceLineVisible:false,visible:false});
 mom.setData(data.mom);
-const stochasticMode='Stochastic thử';
+const stochasticMode='Bộ chỉ báo mua bán';
 const modes={RSI:[rsi,rsi30,rsi70],MACD:[macd,signal,hist],MOM:[mom],
     [stochasticMode]:[stochasticBars,...stochasticLines.map(([,series])=>series)]};
 const candleFocusSeries=new Set([stochasticBars,...stochasticLines
