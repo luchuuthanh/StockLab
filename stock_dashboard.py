@@ -449,6 +449,11 @@ def render_stock_dashboard():
             format_func=history_label,
             key="stocklab_chart_days",
         )
+        timeframe_labels = {"1D": "D1", "2D": "D2", "3D": "D3", "1W": "Tuần", "1M": "Tháng"}
+        timeframe = st.radio(
+            "Khung nến biểu đồ", list(timeframe_labels), format_func=timeframe_labels.__getitem__,
+            horizontal=True, key="stocklab_chart_timeframe",
+        )
         index_labels = {code: label for label, code in COMPARE_INDICES.items()}
         chart_symbols = []
         for item in selected_symbols:
@@ -459,27 +464,27 @@ def render_stock_dashboard():
         selected = chart_symbols[0] if chart_symbols else "AAM"
         st.caption("Biểu đồ hiển thị mã đầu tiên. Bảng đối chiếu bên dưới dùng dữ liệu quét cổ phiếu.")
         try:
-            # Keep H1 unavailable until the D1 chart is fully validated in the live app.
-            timeframe = "1D"
-            st.caption("Đang hoàn thiện và kiểm thử biểu đồ D1. Khung H1 sẽ được mở sau.")
+            from stock_compare import aggregate_candles
             start = (date.today() - timedelta(days=chart_days)).isoformat()
             end = date.today().isoformat()
             if selected in COMPARE_INDICES:
                 clean_chart, chart_source = fetch_index_chart_quotes(COMPARE_INDICES[selected], start, end)
                 chart_warning = None
             else:
-                raw_chart, chart_source = fetch_chart_quotes(selected, start, end, interval=timeframe)
+                raw_chart, chart_source = fetch_chart_quotes(selected, start, end, interval="1D")
                 clean_chart, chart_warning = sanitize_daily_chart_bars(raw_chart)
             st.caption(f"Nguồn dữ liệu biểu đồ: {chart_source}.")
             if chart_warning:
                 st.warning(chart_warning)
-            chart = add_indicators(clean_chart)
+            chart = add_indicators(aggregate_candles(clean_chart, timeframe))
             chart = chart.dropna(subset=["date", "open", "high", "low", "close"])
             if chart.empty:
                 st.warning("Chưa có dữ liệu OHLC hợp lệ cho mã này.")
             else:
-                first, last = chart.iloc[0], chart.iloc[-1]
-                st.caption(f"Dữ liệu thực tế: {first['date']:%d/%m/%Y} đến {last['date']:%d/%m/%Y} · {len(chart):,} phiên.")
+                last = chart.iloc[-1]
+                bar_unit = "phiên" if timeframe == "1D" else "nến"
+                first_date = clean_chart["date"].min()
+                st.caption(f"Dữ liệu thực tế: {first_date:%d/%m/%Y} đến {last['date']:%d/%m/%Y} · {len(chart):,} {bar_unit}.")
                 p1, p2, p3, p4, p5 = st.columns(5)
                 close_label = "Điểm đóng cửa" if selected in COMPARE_INDICES else "Giá đóng cửa"
                 p1.metric(close_label, f"{last['close']:,.2f}")
@@ -488,7 +493,7 @@ def render_stock_dashboard():
                 p4.metric("RSI14", f"{last['RSI14']:.1f}" if pd.notna(last["RSI14"]) else "—")
                 p5.metric("Khối lượng", f"{last['volume']:,.0f}")
                 from lightweight_chart import render_lightweight_chart
-                render_lightweight_chart(chart, selected)
+                render_lightweight_chart(chart, selected, timeframe=timeframe)
                 st.dataframe(chart.tail(30).sort_values("date", ascending=False), use_container_width=True, hide_index=True)
         except Exception as exc:
             st.error(f"Không tải được biểu đồ {selected}: {exc}")

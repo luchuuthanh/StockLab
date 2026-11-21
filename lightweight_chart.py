@@ -23,7 +23,7 @@ def calculate_stochastic_trial(chart: pd.DataFrame) -> pd.DataFrame:
     })
 
 
-def render_lightweight_chart(chart: pd.DataFrame, symbol: str) -> None:
+def render_lightweight_chart(chart: pd.DataFrame, symbol: str, timeframe: str = "1D") -> None:
     """Render interactive candles with touch navigation, volume and selectable overlays."""
     # Standard Ichimoku (9, 26, 52), with 26-period projection.
     ordered = chart.sort_values("date").drop_duplicates("date", keep="last").copy()
@@ -38,7 +38,14 @@ def render_lightweight_chart(chart: pd.DataFrame, symbol: str) -> None:
     span_a = (tenkan + kijun) / 2
     span_b = (hi52 + lo52) / 2
     dates = list(ordered["date"])
-    future = pd.bdate_range(start=dates[-1] + pd.Timedelta(days=1), periods=26)
+    projection_step = {
+        "1D": pd.offsets.BusinessDay(),
+        "2D": pd.offsets.BusinessDay(2),
+        "3D": pd.offsets.BusinessDay(3),
+        "1W": pd.offsets.Week(weekday=4),
+        "1M": pd.offsets.BMonthEnd(),
+    }[timeframe]
+    future = pd.date_range(start=dates[-1] + projection_step, periods=26, freq=projection_step)
     projected_dates = dates + list(future)
     def ichipoints(values, shift=0):
         return [{"time": projected_dates[i + shift].strftime("%Y-%m-%d"), "value": round(float(v), 6)}
@@ -80,7 +87,8 @@ def render_lightweight_chart(chart: pd.DataFrame, symbol: str) -> None:
                           "overlays": {k: points(k) for k in ("EMA7", "SMA20", "EMA20", "EMA50", "EMA100")},
                           "rsi": points("RSI14"), "macd": points("MACD"),
                           "signal": points("MACD_SIGNAL"), "hist": points("MACD_HIST"),
-                          "symbol": symbol, "ichimoku": ichimoku, "bollinger": bollinger,
+                          "symbol": symbol, "barUnit": "phiên" if timeframe == "1D" else "nến",
+                          "ichimoku": ichimoku, "bollinger": bollinger,
                           "timeline": [day.strftime("%Y-%m-%d") for day in projected_dates],
                           "stochastic": {name: ichipoints(values) for name, values in stochastic.items()},
                           "stochasticBars": stochastic_bars}, ensure_ascii=True).replace("</", "<\\/")
@@ -100,7 +108,7 @@ button.active{background:#186b7c;border-color:#32c7c5}#status{padding:4px 10px;m
 <script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
 <script>
 const data=__DATA__;
-document.getElementById('status').textContent=data.symbol+' · '+data.candles.length+' phiên · Đang khởi tạo biểu đồ';
+document.getElementById('status').textContent=data.symbol+' · '+data.candles.length+' '+data.barUnit+' · Đang khởi tạo biểu đồ';
 if(!window.LightweightCharts){document.getElementById('error').textContent='Lỗi tải thư viện biểu đồ từ CDN. Vui lòng kiểm tra kết nối mạng.';}
 else {try {
 const L=window.LightweightCharts;
@@ -299,7 +307,7 @@ for(const scale of scales)scale.subscribeVisibleLogicalRangeChange(range=>{
     syncRange(scale,range);
     drawSession();
 });
-document.getElementById('status').textContent=data.symbol+' · '+data.candles.length+' phiên · Vuốt để xem lịch sử · Chụm hai ngón để thu phóng';
+document.getElementById('status').textContent=data.symbol+' · '+data.candles.length+' '+data.barUnit+' · Vuốt để xem lịch sử · Chụm hai ngón để thu phóng';
 let initialRangeApplied=false;
 const observer=new ResizeObserver(()=>{
     const range=initialRangeApplied?price.timeScale().getVisibleLogicalRange():
