@@ -129,17 +129,20 @@ def render_lightweight_chart(chart: pd.DataFrame, symbol: str, timeframe: str = 
                           "stochasticMarkers": stochastic_trade_markers(stochastic, dates)}, ensure_ascii=True).replace("</", "<\\/")
     html = """<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
 <style>html,body{margin:0;background:#101722;color:#e4eaf2;font:13px system-ui,sans-serif}
-#toolbar{display:flex;gap:6px;overflow-x:auto;padding:8px;white-space:nowrap}
+#toolbar,#osc-tools{display:flex;align-items:center;gap:6px;overflow-x:auto;padding:8px;white-space:nowrap}
+#osc-tools{margin:4px 8px;border:1px solid #415168;border-radius:8px;background:#172233}
+#osc-tools button{flex:none;min-height:44px}
+#candle-focus[hidden]{display:none}
 button{background:#263446;color:#e4eaf2;border:1px solid #415168;border-radius:7px;padding:9px 12px}
 button.active{background:#186b7c;border-color:#32c7c5}#status{padding:4px 10px;min-height:18px;color:#b5c7d8}
-#price{height:410px}#volume{height:90px}#osc{height:220px}#osc-tools{padding:4px 8px}#osc-tools[hidden]{display:none}#error{padding:12px;color:#f6bd60}
+#price{height:410px}#volume{height:90px}#osc{height:220px}#error{padding:12px;color:#f6bd60}
 #price,#volume,#osc{position:relative}
 .session-line,.session-values{position:absolute;z-index:2;pointer-events:none}
 .session-line{top:0;bottom:0;border-left:1px dashed #d7e0ed}
 #price .session-line,#osc .session-line{bottom:26px}
 .session-values{top:4px;left:6px;max-width:calc(100% - 90px);padding:4px 6px;border-radius:4px;background:#101722ee;color:#edf3fb;line-height:1.35;font-size:12px}
 </style></head><body><div id="toolbar"></div><div id="status">Chạm vào nến để xem giá · Vuốt để xem lịch sử · Chụm hai ngón để thu phóng</div>
-<div id="price"></div><div id="volume"></div><div id="osc-tools" hidden><button id="candle-focus" type="button" aria-pressed="false">Chỉ xem nến</button></div><div id="osc"></div><div id="error"></div>
+<div id="price"></div><div id="volume"></div><div id="osc-tools" role="group" aria-label="Công cụ khung chỉ báo"><button id="candle-focus" type="button" aria-pressed="false" hidden>Chỉ xem nến</button></div><div id="osc"></div><div id="error"></div>
 <script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
 <script>
 const data=__DATA__;
@@ -213,8 +216,12 @@ function setMode(name){
             item.applyOptions({visible:key===name&&(!candlesOnly||candleFocusSeries.has(item))});
         }
     }
-    oscTools.hidden=!stochasticActive;
-    document.querySelectorAll('[data-mode]').forEach(b=>b.classList.toggle('active',b.dataset.mode===name));
+    candleFocus.hidden=!stochasticActive;
+    document.querySelectorAll('[data-mode]').forEach(button=>{
+        const selected=button.dataset.mode===name;
+        button.classList.toggle('active',selected);
+        button.setAttribute('aria-pressed',String(selected));
+    });
 }
 candleFocus.onclick=()=>{
     const active=candleFocus.getAttribute('aria-pressed')!=='true';
@@ -247,7 +254,17 @@ notesButton.onclick=()=>{
 toolbar.append(notesButton,bbButton);
 const ichiButton=document.createElement('button');ichiButton.textContent='Ichimoku (9,26,52)';ichiButton.onclick=()=>{const on=!ichiButton.classList.contains('active');ichiButton.classList.toggle('active',on);for(const series of Object.values(ichi))series.applyOptions({visible:on});};toolbar.appendChild(ichiButton);
 for(const name of Object.keys(overlay)){const b=document.createElement('button');b.textContent=name;b.className=['EMA7','SMA20','EMA100'].includes(name)?'active':'';overlay[name].applyOptions({visible:b.className==='active'});b.onclick=()=>{const on=!b.classList.contains('active');b.classList.toggle('active',on);overlay[name].applyOptions({visible:on});};toolbar.appendChild(b);}
-for(const name of Object.keys(modes)){const b=document.createElement('button');b.textContent=name;b.dataset.mode=name;b.onclick=()=>setMode(name);toolbar.appendChild(b);}
+for(const controls of [toolbar,oscTools]){
+    for(const name of Object.keys(modes)){
+        const button=document.createElement('button');
+        button.type='button';
+        button.textContent=name;
+        button.dataset.mode=name;
+        button.onclick=()=>setMode(name);
+        controls.appendChild(button);
+    }
+}
+oscTools.appendChild(candleFocus);
 setMode('RSI');
 const panes=[['price',price],['volume',vol],['osc',osc]];
 // Every pane needs identical logical indexes, including Ichimoku projection dates.
@@ -366,4 +383,4 @@ for(const [id] of panes)observer.observe(document.getElementById(id));
 } catch(e) {document.getElementById('error').textContent='Lỗi khởi tạo biểu đồ: '+(e && e.message ? e.message : String(e)); console.error(e);}
 }
 </script></body></html>""".replace("__DATA__", payload)
-    components.html(html, height=875, scrolling=False)
+    components.html(html, height=900, scrolling=False)
