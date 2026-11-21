@@ -488,6 +488,7 @@ def render_stock_dashboard():
                 volume_metric.metric("Khối lượng", f"{last['volume']:,.0f}")
                 from lightweight_chart import render_lightweight_chart
                 render_lightweight_chart(chart, selected, timeframe=timeframe)
+                st.caption("Mũi tên của Bộ chỉ báo mua bán được tính theo khung nến đang chọn.")
                 st.dataframe(chart.tail(30).sort_values("date", ascending=False), use_container_width=True, hide_index=True)
         except Exception as exc:
             st.error(f"Không tải được biểu đồ {selected}: {exc}")
