@@ -128,6 +128,8 @@ const stochasticLines=Object.entries(data.stochastic).map(([name,points],i)=>{
 const stochasticMode='Stochastic thử';
 const modes={RSI:[rsi,rsi30,rsi70],MACD:[macd,signal,hist],
     [stochasticMode]:[stochasticBars,...stochasticLines.map(([,series])=>series)]};
+const candleFocusSeries=new Set([stochasticBars,...stochasticLines
+    .filter(([name])=>name==='Biên trên'||name==='Biên dưới').map(([,series])=>series)]);
 osc.subscribeCrosshairMove(point=>{
     if(current!==stochasticMode||!point.time)return;
     const values=stochasticLines.flatMap(([name,series])=>{
@@ -145,7 +147,7 @@ function setMode(name){
     const candlesOnly=stochasticActive&&candleFocus.getAttribute('aria-pressed')==='true';
     for(const [key,series] of Object.entries(modes)){
         for(const item of series){
-            item.applyOptions({visible:key===name&&(!candlesOnly||item===stochasticBars)});
+            item.applyOptions({visible:key===name&&(!candlesOnly||candleFocusSeries.has(item))});
         }
     }
     oscTools.hidden=!stochasticActive;
