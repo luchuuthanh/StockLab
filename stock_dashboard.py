@@ -460,14 +460,14 @@ def render_stock_dashboard():
                 signals = pd.DataFrame(signal_rows.values())
                 latest = signals.loc[signals["fresh"].eq(1), "data_date"].max()
                 st.caption(f"Khung D1 · Phiên dữ liệu mới nhất: {latest} · {signals['fresh'].sum():,} mã cập nhật.")
-                volume_floor = st.number_input("Khối lượng phiên gần nhất phải lớn hơn (cổ phiếu)",
-                                               min_value=50000, value=50000, step=10000,
-                                               key="signals_volume_floor")
+                volume_floor = st.number_input("Khối lượng phiên gần nhất từ (cổ phiếu)",
+                                               min_value=100000, value=100000, step=10000,
+                                               key="signals_volume_floor_100k")
                 tracked = signals["buy_date"].ne("") & signals["buy_price"].gt(0)
                 missing_volume = (tracked & signals["last_volume"].isna()).sum()
                 if missing_volume:
                     st.info(f"{missing_volume:,} mã đang theo dõi chưa có khối lượng để áp dụng bộ lọc.")
-                active = signals.loc[tracked & signals["last_volume"].gt(volume_floor)].copy()
+                active = signals.loc[tracked & signals["last_volume"].ge(volume_floor)].copy()
                 active["% lợi nhuận"] = (active["last_close"] / active["buy_price"] - 1) * 100
                 active["Dữ liệu"] = "Cũ"
                 active.loc[active["fresh"].eq(1) & active["data_date"].eq(latest), "Dữ liệu"] = "Mới nhất"
