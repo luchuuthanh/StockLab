@@ -1,6 +1,7 @@
 """Mobile-friendly TradingView Lightweight Charts embed for StockLab."""
 import json
 import pandas as pd
+import streamlit as st
 import streamlit.components.v1 as components
 
 
@@ -136,12 +137,16 @@ def render_lightweight_chart(chart: pd.DataFrame, symbol: str, timeframe: str = 
 #error:empty{display:none}
 button{background:#263446;color:#e4eaf2;border:1px solid #415168;border-radius:7px;padding:9px 12px}
 button.active{background:#186b7c;border-color:#32c7c5}#status{padding:4px 10px;min-height:18px;color:#b5c7d8}
-#price{height:410px}#volume{height:90px}#error{padding:12px;color:#f6bd60}
+#error{padding:12px;color:#f6bd60}
 #price,#volume,.indicator-chart{position:relative}
 .session-line,.session-values{position:absolute;z-index:2;pointer-events:none}
 .session-line{top:0;bottom:0;border-left:1px dashed #d7e0ed}
-#price .session-line,.indicator-chart .session-line{bottom:26px}
+.has-time-axis .session-line{bottom:26px}
 .session-values{top:4px;left:6px;max-width:calc(100% - 90px);padding:4px 6px;border-radius:4px;background:#101722ee;color:#edf3fb;line-height:1.35;font-size:12px}
+@media(max-width:600px){
+    .indicator-header{height:30px}
+    #candle-focus{padding:4px 8px}
+}
 </style></head><body><div id="toolbar"></div><div id="status">Chạm vào nến để xem giá · Vuốt để xem lịch sử · Chụm hai ngón để thu phóng</div>
 <div id="price"></div><div id="volume"></div>
 <section id="indicator-1" aria-labelledby="indicator-title-1"><div class="indicator-header"><h2 id="indicator-title-1"></h2><button id="candle-focus" type="button" aria-pressed="false" hidden>Chỉ xem nến</button></div><div class="indicator-chart" id="osc"></div></section>
@@ -154,8 +159,12 @@ document.getElementById('status').textContent=data.symbol+' · '+data.candles.le
 if(!window.LightweightCharts){document.getElementById('error').textContent='Lỗi tải thư viện biểu đồ từ CDN. Vui lòng kiểm tra kết nối mạng.';}
 else {try {
 const L=window.LightweightCharts;
+const compactScreen=window.matchMedia('(max-width: 600px)');
+const chartSizes=()=>compactScreen.matches
+    ? {price:225,volume:55,indicator:116,header:30}
+    : {price:410,volume:90,indicator:220,header:36};
 const base={crosshair:{vertLine:{visible:false,labelVisible:false},horzLine:{visible:true,labelVisible:true}},layout:{background:{type:'solid',color:'#101722'},textColor:'#c8d2df'},grid:{vertLines:{color:'#1b2736'},horzLines:{color:'#1b2736'}},rightPriceScale:{borderColor:'#35465a',minimumWidth:76},timeScale:{borderColor:'#35465a',timeVisible:false},handleScroll:{mouseWheel:true,pressedMouseMove:true,horzTouchDrag:true,vertTouchDrag:false},handleScale:{mouseWheel:true,pinch:true,axisPressedMouseMove:true}};
-const price=L.createChart(document.getElementById('price'),{...base,width:Math.max(320,document.getElementById('price').clientWidth),height:410});
+const price=L.createChart(document.getElementById('price'),{...base,width:Math.max(320,document.getElementById('price').clientWidth),height:chartSizes().price});
 const candle=price.addCandlestickSeries({upColor:'#26a69a',downColor:'#ef5350',wickUpColor:'#26a69a',wickDownColor:'#ef5350',borderVisible:false});
 candle.setData(data.candles);
 const colors={EMA7:'#f8d05a',SMA20:'#37c3ff',EMA20:'#b48bff',EMA50:'#f59e73',EMA100:'#e5e7eb'};
@@ -172,7 +181,7 @@ const ichiColors={Tenkan:'#ff9d43',Kijun:'#e95bb5',SenkouA:'#29bd88',SenkouB:'#f
 const ichi={};
 for(const [name,points] of Object.entries(data.ichimoku)){const series=price.addLineSeries({color:ichiColors[name],lineWidth:2,priceLineVisible:false,lastValueVisible:false,visible:false});series.setData(points);ichi[name]=series;}
 for(const [name,points] of Object.entries(data.overlays)){const s=price.addLineSeries({color:colors[name],lineWidth:2,priceLineVisible:false,lastValueVisible:true});s.setData(points);overlay[name]=s;}
-const vol=L.createChart(document.getElementById('volume'),{...base,width:Math.max(320,document.getElementById('volume').clientWidth),height:90,timeScale:{...base.timeScale,visible:false}});
+const vol=L.createChart(document.getElementById('volume'),{...base,width:Math.max(320,document.getElementById('volume').clientWidth),height:chartSizes().volume,timeScale:{...base.timeScale,visible:false}});
 vol.addHistogramSeries({priceFormat:{type:'volume'},priceScaleId:'right',priceLineVisible:false,lastValueVisible:false}).setData(data.volume);
 const volumeAverage=vol.addLineSeries({color:'#f8d05a',lineWidth:2,priceFormat:{type:'volume'},
     priceLineVisible:false,lastValueVisible:false});
@@ -183,7 +192,7 @@ function createIndicatorPane(id, sectionId, titleId){
     const root=document.getElementById(id);
     const title=document.getElementById(titleId);
     const section=document.getElementById(sectionId);
-    const osc=L.createChart(root,{...base,width:Math.max(320,root.clientWidth),height:220});
+    const osc=L.createChart(root,{...base,width:Math.max(320,root.clientWidth),height:chartSizes().indicator});
     const rsi=osc.addLineSeries({color:'#dba5ff',lineWidth:2,priceLineVisible:false});rsi.setData(data.rsi);
     const rsi30=osc.addLineSeries({color:'#f59e0b',lineWidth:1,lineStyle:2,priceLineVisible:false,lastValueVisible:false});
     const rsi70=osc.addLineSeries({color:'#f59e0b',lineWidth:1,lineStyle:2,priceLineVisible:false,lastValueVisible:false});
@@ -221,8 +230,22 @@ const indicatorPanes=[
     createIndicatorPane('osc','indicator-1','indicator-title-1'),
     createIndicatorPane('osc-2','indicator-2','indicator-title-2')
 ];
-const selectedModes=['RSI'];
+const selectedModes=['RSI','MACD'];
 const buttons=new Map();
+function resizeChartPanes(){
+    const {price:priceHeight,volume:volumeHeight,indicator,header}=chartSizes();
+    const lastIndicator=selectedModes.length-1;
+    const resize=(root,chart,height,showAxis)=>{
+        root.classList.toggle('has-time-axis',showAxis);
+        chart.applyOptions({width:root.clientWidth||320,height,timeScale:{visible:showAxis}});
+    };
+    resize(document.getElementById('price'),price,priceHeight,!compactScreen.matches);
+    resize(document.getElementById('volume'),vol,volumeHeight,false);
+    indicatorPanes.slice(0,selectedModes.length).forEach((pane,i)=>{
+        const height=lastIndicator===0?indicator*2+header:indicator;
+        resize(pane.root,pane.chart,height,!compactScreen.matches||i===lastIndicator);
+    });
+}
 function renderIndicators(){
     const range=price.timeScale().getVisibleLogicalRange();
     const candlesOnly=candleFocus.getAttribute('aria-pressed')==='true';
@@ -240,10 +263,12 @@ function renderIndicators(){
                     item.applyOptions({visible:name===mode&&(!stochasticActive||!candlesOnly||pane.candleFocusSeries.has(item))});
                 }
             }
-            pane.chart.applyOptions({width:pane.root.clientWidth||320,height:selectedModes.length===2?220:476});
             pane.chart.priceScale('right').applyOptions({autoScale:true});
-            if(range)pane.chart.timeScale().setVisibleLogicalRange(range);
         });
+        resizeChartPanes();
+        if(range){
+            for(const [,chart] of panes)chart.timeScale().setVisibleLogicalRange(range);
+        }
     } finally {
         rangeUpdateInProgress=false;
     }
@@ -419,7 +444,20 @@ const observer=new ResizeObserver(()=>{
     }
 });
 for(const [id] of panes)observer.observe(document.getElementById(id));
+compactScreen.addEventListener('change',()=>{
+    renderIndicators();
+    drawSession();
+});
 } catch(e) {document.getElementById('error').textContent='Lỗi khởi tạo biểu đồ: '+(e && e.message ? e.message : String(e)); console.error(e);}
 }
 </script></body></html>""".replace("__DATA__", payload)
-    components.html(html, height=1100, scrolling=False)
+    with st.container(key="stocklab_technical_chart"):
+        st.html("""
+            <style>
+                .st-key-stocklab_technical_chart { container-type: inline-size; }
+                @container (max-width: 600px) {
+                    .st-key-stocklab_technical_chart iframe { height: 650px !important; }
+                }
+            </style>
+        """)
+        components.html(html, height=1100, scrolling=False)
