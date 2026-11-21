@@ -8,6 +8,7 @@ import streamlit as st
 
 EXCHANGES = {"HOSE", "HNX", "UPCOM"}
 DATA_SOURCES = ("vci", "kbs")
+COMPARE_INDICES = {"VN-Index": "VNINDEX", "VN30": "VN30"}
 _VNSTOCK_AUTH_READY = False
 
 class MarketDataError(RuntimeError):
@@ -98,6 +99,25 @@ def fetch_chart_quotes(symbol: str, start_date: str, end_date: str, interval: st
         return fetch_daily_quotes(symbol, start_date, end_date, interval), "Vnstock VCI/KBS"
     except Exception as exc:
         raise MarketDataError(f"Cophieu68: {cp68_error}. Vnstock: {exc}") from exc
+
+@st.cache_data(ttl=900, show_spinner=False)
+def fetch_index_chart_quotes(symbol: str, start_date: str, end_date: str) -> tuple[pd.DataFrame, str]:
+    """Load daily OHLCV through Vnstock's domestic index interface."""
+    _vnstock_classes()
+    from vnstock import Market
+
+    errors = []
+    for source in DATA_SOURCES:
+        try:
+            raw = Market(source).index(symbol).ohlcv(start=start_date, end=end_date, interval="1D")
+            quotes = _normalize_quotes(raw).dropna(subset=["volume"])
+            if not quotes.empty:
+                return quotes, f"Vnstock {source.upper()} · chỉ số"
+            errors.append(f"{source}: không có dữ liệu")
+        except Exception as exc:
+            errors.append(f"{source}: {exc}")
+    raise MarketDataError(f"Không tải được lịch sử {symbol}. " + " | ".join(errors))
+
 
 def sanitize_daily_chart_bars(df: pd.DataFrame) -> tuple[pd.DataFrame, str | None]:
     """Normalize trading dates and omit a suspicious latest one-lot flat candle."""
@@ -426,9 +446,10 @@ def render_stock_dashboard():
             for symbol in result["Mã"].dropna()
             if str(symbol).strip()
         })
-        compare_symbols = ["VN-Index"] + [
-            symbol for symbol in available_symbols if symbol != "VN-INDEX"
-        ]
+        index_codes = set(COMPARE_INDICES.values())
+        compare_symbols = [*COMPARE_INDICES, *(
+            symbol for symbol in available_symbols if symbol.replace("-", "") not in index_codes
+        )]
         col_a, col_b = st.columns(2)
         with col_a:
             ticker_a = st.selectbox(
@@ -456,7 +477,7 @@ def render_stock_dashboard():
         )
         if not ticker_a or not ticker_b or ticker_a == ticker_b:
             st.info("Nhập hai mã cổ phiếu khác nhau.")
-        elif not all(3 <= len(t) <= 6 and t.isalnum() for t in (ticker_a, ticker_b)):
+        elif not all(t in COMPARE_INDICES or (3 <= len(t) <= 6 and t.isalnum()) for t in (ticker_a, ticker_b)):
             st.warning("Mỗi mã phải có 3–6 ký tự chữ hoặc số.")
         else:
             try:
@@ -466,8 +487,12 @@ def render_stock_dashboard():
                 sources = []
                 from stock_compare import aggregate_candles, render_stock_comparison
                 for ticker in (ticker_a, ticker_b):
-                    raw, source = fetch_chart_quotes(ticker, start_date, end_date, interval="1D")
-                    clean, warning = sanitize_daily_chart_bars(raw)
+                    if ticker in COMPARE_INDICES:
+                        clean, source = fetch_index_chart_quotes(COMPARE_INDICES[ticker], start_date, end_date)
+                        warning = None
+                    else:
+                        raw, source = fetch_chart_quotes(ticker, start_date, end_date, interval="1D")
+                        clean, warning = sanitize_daily_chart_bars(raw)
                     if warning:
                         st.warning(f"{ticker}: {warning}")
                     if clean.empty:
