@@ -72,6 +72,7 @@ def render_lightweight_chart(chart: pd.DataFrame, symbol: str) -> None:
                           "rsi": points("RSI14"), "macd": points("MACD"),
                           "signal": points("MACD_SIGNAL"), "hist": points("MACD_HIST"),
                           "symbol": symbol, "ichimoku": ichimoku,
+                          "timeline": [day.strftime("%Y-%m-%d") for day in projected_dates],
                           "stochastic": {name: ichipoints(values) for name, values in stochastic.items()},
                           "stochasticBars": stochastic_bars}, ensure_ascii=True).replace("</", "<\\/")
     html = """<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
@@ -89,7 +90,7 @@ document.getElementById('status').textContent=data.symbol+' · '+data.candles.le
 if(!window.LightweightCharts){document.getElementById('error').textContent='Lỗi tải thư viện biểu đồ từ CDN. Vui lòng kiểm tra kết nối mạng.';}
 else {try {
 const L=window.LightweightCharts;
-const base={layout:{background:{type:'solid',color:'#101722'},textColor:'#c8d2df'},grid:{vertLines:{color:'#1b2736'},horzLines:{color:'#1b2736'}},rightPriceScale:{borderColor:'#35465a'},timeScale:{borderColor:'#35465a',timeVisible:false},handleScroll:{mouseWheel:true,pressedMouseMove:true,horzTouchDrag:true,vertTouchDrag:false},handleScale:{mouseWheel:true,pinch:true,axisPressedMouseMove:true}};
+const base={layout:{background:{type:'solid',color:'#101722'},textColor:'#c8d2df'},grid:{vertLines:{color:'#1b2736'},horzLines:{color:'#1b2736'}},rightPriceScale:{borderColor:'#35465a',minimumWidth:76},timeScale:{borderColor:'#35465a',timeVisible:false},handleScroll:{mouseWheel:true,pressedMouseMove:true,horzTouchDrag:true,vertTouchDrag:false},handleScale:{mouseWheel:true,pinch:true,axisPressedMouseMove:true}};
 const price=L.createChart(document.getElementById('price'),{...base,width:Math.max(320,document.getElementById('price').clientWidth),height:410});
 const candle=price.addCandlestickSeries({upColor:'#26a69a',downColor:'#ef5350',wickUpColor:'#26a69a',wickDownColor:'#ef5350',borderVisible:false});
 candle.setData(data.candles);
@@ -99,8 +100,8 @@ const ichiColors={Tenkan:'#ff9d43',Kijun:'#e95bb5',SenkouA:'#29bd88',SenkouB:'#f
 const ichi={};
 for(const [name,points] of Object.entries(data.ichimoku)){const series=price.addLineSeries({color:ichiColors[name],lineWidth:2,priceLineVisible:false,lastValueVisible:false,visible:false});series.setData(points);ichi[name]=series;}
 for(const [name,points] of Object.entries(data.overlays)){const s=price.addLineSeries({color:colors[name],lineWidth:2,priceLineVisible:false,lastValueVisible:true});s.setData(points);overlay[name]=s;}
-const vol=L.createChart(document.getElementById('volume'),{...base,width:Math.max(320,document.getElementById('volume').clientWidth),height:90,timeScale:{...base.timeScale,visible:false},rightPriceScale:{visible:false}});
-vol.addHistogramSeries({priceFormat:{type:'volume'},priceScaleId:''}).setData(data.volume);
+const vol=L.createChart(document.getElementById('volume'),{...base,width:Math.max(320,document.getElementById('volume').clientWidth),height:90,timeScale:{...base.timeScale,visible:false}});
+vol.addHistogramSeries({priceFormat:{type:'volume'},priceScaleId:'right',priceLineVisible:false,lastValueVisible:false}).setData(data.volume);
 const osc=L.createChart(document.getElementById('osc'),{...base,width:Math.max(320,document.getElementById('osc').clientWidth),height:145});
 const rsi=osc.addLineSeries({color:'#dba5ff',lineWidth:2,priceLineVisible:false});rsi.setData(data.rsi);
 const rsi30=osc.addLineSeries({color:'#f59e0b',lineWidth:1,lineStyle:2,priceLineVisible:false,lastValueVisible:false});
@@ -137,21 +138,55 @@ osc.subscribeCrosshairMove(point=>{
     document.getElementById('status').textContent=data.symbol+' · '+point.time+' · '+values.join(' · ');
 });
 let current='RSI';
-function setMode(name){current=name;for(const [key,series] of Object.entries(modes))for(const s of series)s.applyOptions({visible:key===name});document.querySelectorAll('[data-mode]').forEach(b=>b.classList.toggle('active',b.dataset.mode===name));const range=price.timeScale().getVisibleLogicalRange();if(range)osc.timeScale().setVisibleLogicalRange(range);}
+function setMode(name){current=name;for(const [key,series] of Object.entries(modes))for(const s of series)s.applyOptions({visible:key===name});document.querySelectorAll('[data-mode]').forEach(b=>b.classList.toggle('active',b.dataset.mode===name));}
 const toolbar=document.getElementById('toolbar');
 const ichiButton=document.createElement('button');ichiButton.textContent='Ichimoku (9,26,52)';ichiButton.onclick=()=>{const on=!ichiButton.classList.contains('active');ichiButton.classList.toggle('active',on);for(const series of Object.values(ichi))series.applyOptions({visible:on});};toolbar.appendChild(ichiButton);
 for(const name of Object.keys(overlay)){const b=document.createElement('button');b.textContent=name;b.className=['EMA7','SMA20','EMA100'].includes(name)?'active':'';overlay[name].applyOptions({visible:b.className==='active'});b.onclick=()=>{const on=!b.classList.contains('active');b.classList.toggle('active',on);overlay[name].applyOptions({visible:on});};toolbar.appendChild(b);}
 for(const name of Object.keys(modes)){const b=document.createElement('button');b.textContent=name;b.dataset.mode=name;b.onclick=()=>setMode(name);toolbar.appendChild(b);}
 setMode('RSI');
 price.subscribeCrosshairMove(p=>{if(!p.time)return;const v=p.seriesData.get(candle);if(v)document.getElementById('status').textContent=data.symbol+' · '+p.time+' · O '+v.open+' H '+v.high+' L '+v.low+' C '+v.close;});
-let syncing=false;
-function sync(from,to){from.timeScale().subscribeVisibleLogicalRangeChange(range=>{if(!range||syncing)return;syncing=true;to.timeScale().setVisibleLogicalRange(range);syncing=false;});}
-sync(price,vol);sync(price,osc);
+const panes=[['price',price],['volume',vol],['osc',osc]];
+// Every pane needs identical logical indexes, including Ichimoku projection dates.
+const timeline=data.timeline.map(time=>({time,value:0}));
+for(const [,chart] of panes){
+    chart.addLineSeries({visible:false,priceLineVisible:false,lastValueVisible:false}).setData(timeline);
+}
+const scales=panes.map(([,chart])=>chart.timeScale());
+function equalRange(a,b){
+    return a&&b&&Math.abs(a.from-b.from)<1e-6&&Math.abs(a.to-b.to)<1e-6;
+}
+let rangeUpdateInProgress=false;
+function syncRange(source,range){
+    if(!range||rangeUpdateInProgress||!equalRange(range,source.getVisibleLogicalRange()))return;
+    rangeUpdateInProgress=true;
+    try {
+        for(const target of scales){
+            if(target!==source&&!equalRange(range,target.getVisibleLogicalRange())){
+                target.setVisibleLogicalRange(range);
+            }
+        }
+    } finally {
+        rangeUpdateInProgress=false;
+    }
+}
+for(const scale of scales)scale.subscribeVisibleLogicalRangeChange(range=>syncRange(scale,range));
 price.timeScale().fitContent();
+syncRange(price.timeScale(),price.timeScale().getVisibleLogicalRange());
 document.getElementById('status').textContent=data.symbol+' · '+data.candles.length+' phiên · Vuốt để xem lịch sử · Chụm hai ngón để thu phóng';
-const observer=new ResizeObserver(()=>{for(const [id,c] of [['price',price],['volume',vol],['osc',osc]])c.applyOptions({width:document.getElementById(id).clientWidth});});
-for(const id of ['price','volume','osc'])observer.observe(document.getElementById(id));
-setTimeout(()=>{for(const [id,c] of [['price',price],['volume',vol],['osc',osc]])c.applyOptions({width:Math.max(320,document.getElementById(id).clientWidth)});price.timeScale().fitContent();},500);
+const observer=new ResizeObserver(()=>{
+    const range=price.timeScale().getVisibleLogicalRange();
+    rangeUpdateInProgress=true;
+    try {
+        for(const [id,chart] of panes){
+            const width=document.getElementById(id).clientWidth;
+            if(width>0)chart.applyOptions({width});
+            if(width>0&&range)chart.timeScale().setVisibleLogicalRange(range);
+        }
+    } finally {
+        rangeUpdateInProgress=false;
+    }
+});
+for(const [id] of panes)observer.observe(document.getElementById(id));
 } catch(e) {document.getElementById('error').textContent='Lỗi khởi tạo biểu đồ: '+(e && e.message ? e.message : String(e)); console.error(e);}
 }
 </script></body></html>""".replace("__DATA__", payload)
