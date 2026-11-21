@@ -103,13 +103,14 @@ def fetch_index_chart_quotes(symbol: str, start_date: str, end_date: str) -> tup
     params = {"symbol": symbol, "resolution": "D", "from": int(start.timestamp()),
               "to": int(end.timestamp()) - 1}
     providers = (
-        ("VNDIRECT", "https://dchart-api.vndirect.com.vn/dchart/history"),
-        ("VPS", "https://histdatafeed.vps.com.vn/tradingview/history"),
+        ("DNSE", "https://services.entrade.com.vn/chart-api/v2/ohlcs/index", "1D"),
+        ("VNDIRECT", "https://dchart-api.vndirect.com.vn/dchart/history", "D"),
+        ("VPS", "https://histdatafeed.vps.com.vn/tradingview/history", "D"),
     )
     columns = {"t": "time", "o": "open", "h": "high", "l": "low", "c": "close", "v": "volume"}
-    for source, url in providers:
+    for source, url, resolution in providers:
         try:
-            response = requests.get(url, params=params, timeout=10)
+            response = requests.get(url, params={**params, "resolution": resolution}, timeout=10)
             response.raise_for_status()
             payload = response.json()
             bars = pd.DataFrame({name: payload[key] for key, name in columns.items()})
