@@ -170,11 +170,11 @@ function syncRange(source,range){
     }
 }
 for(const scale of scales)scale.subscribeVisibleLogicalRangeChange(range=>syncRange(scale,range));
-price.timeScale().fitContent();
-syncRange(price.timeScale(),price.timeScale().getVisibleLogicalRange());
 document.getElementById('status').textContent=data.symbol+' · '+data.candles.length+' phiên · Vuốt để xem lịch sử · Chụm hai ngón để thu phóng';
+let initialRangeApplied=false;
 const observer=new ResizeObserver(()=>{
-    const range=price.timeScale().getVisibleLogicalRange();
+    const range=initialRangeApplied?price.timeScale().getVisibleLogicalRange():
+        {from:-1,to:timeline.length-1};
     rangeUpdateInProgress=true;
     try {
         for(const [id,chart] of panes){
@@ -182,6 +182,7 @@ const observer=new ResizeObserver(()=>{
             if(width>0)chart.applyOptions({width});
             if(width>0&&range)chart.timeScale().setVisibleLogicalRange(range);
         }
+        initialRangeApplied=panes.every(([id])=>document.getElementById(id).clientWidth>0);
     } finally {
         rangeUpdateInProgress=false;
     }
