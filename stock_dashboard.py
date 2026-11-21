@@ -401,7 +401,7 @@ def render_stock_dashboard():
 
     tab_scan, tab_chart, tab_compare, tab_all = st.tabs(["🔎 Bộ lọc cổ phiếu", "📊 Biểu đồ kỹ thuật", "🕯️ So sánh 2 CP", "📋 Toàn bộ thị trường"])
     with tab_scan:
-        mom_tab, roc_tab = st.tabs(["MOM10 ≥ ngưỡng", "ROC14 ≥ ngưỡng"])
+        mom_tab, roc_tab, signals_tab = st.tabs(["MOM10 ≥ ngưỡng", "ROC14 ≥ ngưỡng", "Tín hiệu mua bán"])
         with roc_tab:
             st.subheader("Danh sách ROC14 độc lập · phần trăm thay đổi 14 phiên")
             st.caption("Không yêu cầu MOM10 đạt ngưỡng. Vẫn áp dụng khối lượng tối thiểu và EMA100 nếu bật.")
@@ -419,6 +419,45 @@ def render_stock_dashboard():
             st.metric("Số mã đạt MOM10", f"{len(filtered_mom10):,}")
             st.dataframe(filtered_mom10[["Mã", "Sàn", "Giá đóng cửa", "MOM10 (FireAnt)", "ROC14 (%)", "EMA100", "Khối lượng", "KLGD TB20", "Ngày dữ liệu"]], use_container_width=True, hide_index=True)
             st.download_button("Tải CSV MOM10", filtered_mom10.to_csv(index=False).encode("utf-8-sig"), "co_phieu_MOM10_dat_nguong.csv", "text/csv")
+
+        with signals_tab:
+            from stochastic_signals import load_signal_state
+
+            signal_rows = load_signal_state()
+            if signal_rows:
+                signals = pd.DataFrame(signal_rows.values())
+                latest = signals.loc[signals["fresh"].eq(1), "data_date"].max()
+                st.caption(f"Khung D1 · Phiên dữ liệu mới nhất: {latest} · {signals['fresh'].sum():,} mã cập nhật.")
+                active = signals.loc[signals["buy_date"].ne("") & signals["buy_price"].gt(0)].copy()
+                active["% lợi nhuận"] = (active["last_close"] / active["buy_price"] - 1) * 100
+                active["Dữ liệu"] = "Cũ"
+                active.loc[active["fresh"].eq(1) & active["data_date"].eq(latest), "Dữ liệu"] = "Mới nhất"
+                active = active.rename(columns={
+                    "symbol": "Mã", "exchange": "Sàn", "buy_date": "Ngày báo mua",
+                    "buy_price": "Giá báo mua", "last_close": "Giá gần nhất",
+                    "sessions": "Số phiên", "data_date": "Ngày giá gần nhất",
+                })
+                buys = active.loc[active["Ngày báo mua"].eq(latest) & active["Dữ liệu"].eq("Mới nhất")]
+                st.subheader("Tín hiệu mua")
+                if buys.empty:
+                    st.info("Phiên mới nhất chưa có tín hiệu Mua.")
+                else:
+                    st.dataframe(buys[["Mã", "Sàn", "Ngày báo mua", "Giá báo mua"]].sort_values("Mã"),
+                                 hide_index=True, use_container_width=True)
+                st.subheader("Đang theo dõi")
+                st.caption("Giá báo mua là giá đóng cửa của phiên có tín hiệu. Số phiên bắt đầu từ 0. % lợi nhuận chưa tính phí.")
+                if active.empty:
+                    st.info("Chưa có mã đang theo dõi.")
+                else:
+                    st.dataframe(
+                        active[["Mã", "Sàn", "Ngày báo mua", "Giá báo mua", "Giá gần nhất",
+                                "% lợi nhuận", "Số phiên", "Ngày giá gần nhất", "Dữ liệu"]]
+                        .sort_values(["Ngày báo mua", "Mã"], ascending=[False, True]),
+                        column_config={"% lợi nhuận": st.column_config.NumberColumn(format="%.2f%%")},
+                        hide_index=True, use_container_width=True,
+                    )
+            else:
+                st.info("Hai bảng sẽ có dữ liệu sau lượt quét tín hiệu D1 đầu tiên.")
 
     available_symbols = sorted({
         str(symbol).strip().upper()

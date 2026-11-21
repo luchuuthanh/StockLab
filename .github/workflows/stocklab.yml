@@ -7,6 +7,8 @@ on:
       - "stock_app.py"
       - "stock_dashboard.py"
       - "luchuuthanh_chart.py"
+      - "lightweight_chart.py"
+      - "stochastic_signals.py"
       - "cophieu68_import.py"
       - "requirements.txt"
       - ".github/workflows/stocklab.yml"
@@ -34,7 +36,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
       - name: Check Python syntax
-        run: python -m py_compile stock_app.py stock_dashboard.py luchuuthanh_chart.py cophieu68_import.py
+        run: python -m py_compile stock_app.py stock_dashboard.py luchuuthanh_chart.py cophieu68_import.py stochastic_signals.py lightweight_chart.py
       - name: Live Cophieu68 history smoke test
         run: |
           python - <<'PY'
@@ -100,17 +102,21 @@ jobs:
           print("LUCHUUTHANH indicator calculation smoke test OK")
           PY
       - name: Scan sideways stocks (60 and 120 sessions)
-        if: github.event_name != 'push'
+        if: (github.event_name != 'push' || contains(github.event.head_commit.message, '[scan signals]'))
         timeout-minutes: 60
         run: |
           python - <<'PY'
           from concurrent.futures import ThreadPoolExecutor, as_completed
           from datetime import datetime, timezone
           import pandas as pd
-          from stock_dashboard import fetch_instruments
+          from stock_dashboard import fetch_instruments, sanitize_daily_chart_bars
+          from stochastic_signals import load_signal_state, update_signal_state, STATE_PATH, STATE_COLUMNS
           from cophieu68_import import fetch_cophieu68_history
 
           universe = fetch_instruments()
+          previous = load_signal_state()
+          records = {symbol: {**row, "fresh": 0} for symbol, row in previous.items()}
+          signal_errors = 0
           print(f"Universe: {len(universe)} symbols across {universe['exchange'].nunique()} exchanges")
 
           def scan(item):
@@ -121,6 +127,11 @@ jobs:
                   hist = hist.sort_values("date").drop_duplicates("date").reset_index(drop=True)
                   hist = hist.dropna(subset=["high", "low", "close"])
                   result = {}
+                  try:
+                      clean, _ = sanitize_daily_chart_bars(hist)
+                      result["signal"] = update_signal_state(ticker, str(item.exchange), clean, previous.get(ticker))
+                  except ValueError as exc:
+                      result["signal_error"] = f"{ticker}: {exc}"
                   for window, label in ((60, "60"), (120, "120")):
                       if len(hist) < window:
                           continue
@@ -150,6 +161,11 @@ jobs:
               futures = [pool.submit(scan, item) for item in universe.itertuples(index=False)]
               for n, future in enumerate(as_completed(futures), 1):
                   result, error = future.result()
+                  if "signal" in result:
+                      row = result["signal"]
+                      records[row["symbol"]] = row
+                  if error or "signal_error" in result:
+                      signal_errors += 1
                   if "60" in result:
                       found60.append(result["60"])
                   if "120" in result:
@@ -158,6 +174,11 @@ jobs:
                       errors.append(error)
                   if n % 25 == 0:
                       print(f"Progress: {n}/{len(futures)}; 60-session={len(found60)}; 120-session={len(found120)}; errors={len(errors)}")
+
+          if signal_errors == len(universe) or not records:
+              raise RuntimeError("Không cập nhật được tín hiệu của bất kỳ mã nào")
+          pd.DataFrame(records.values(), columns=STATE_COLUMNS).sort_values("symbol").to_csv(STATE_PATH, index=False)
+          print(f"DAILY SIGNAL SCAN: updated={len(universe) - signal_errors}; failed={signal_errors}")
 
           columns = ["Mã CP", "Sàn", "Giá thấp nhất", "Giá cao nhất", "Biên độ %", "Giá hiện tại", "Số phiên", "Ngày dữ liệu"]
           df60 = pd.DataFrame(found60, columns=columns).sort_values("Biên độ %") if found60 else pd.DataFrame(columns=columns)
@@ -175,21 +196,17 @@ jobs:
           print("SAMPLE ERRORS:", errors[:15])
           PY
       - name: Publish latest market scan for StockLab
-        if: success() && github.event_name != 'push'
+        if: success() && (github.event_name != 'push' || contains(github.event.head_commit.message, '[scan signals]'))
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add stocklab_market_all.csv stocklab_market_passed.csv stocklab_sideways_60.csv stocklab_sideways_120.csv
+          git add stocklab_market_all.csv stocklab_market_passed.csv stocklab_sideways_60.csv stocklab_sideways_120.csv stocklab_trade_signals.csv
           if ! git diff --cached --quiet; then
             git commit -m "Update daily StockLab market scan"
             git fetch origin main
             # A newer code commit may update the tracked CSVs while this scan runs.
             # Keep this run's freshly generated scan outputs if those CSVs conflict.
-            if ! git rebase origin/main; then
-              git checkout --theirs -- stocklab_market_all.csv stocklab_market_passed.csv stocklab_sideways_60.csv stocklab_sideways_120.csv
-              git add stocklab_market_all.csv stocklab_market_passed.csv
-              GIT_EDITOR=true git rebase --continue
-            fi
+            git rebase -X theirs origin/main
             git push origin HEAD:main
           else
             echo "Market scan files unchanged."

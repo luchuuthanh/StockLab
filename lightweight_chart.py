@@ -25,31 +25,36 @@ def calculate_stochastic_trial(chart: pd.DataFrame) -> pd.DataFrame:
 
 def stochastic_trade_markers(stochastic: pd.DataFrame, dates) -> list[dict[str, str]]:
     """Mark crossings of the oscillator candle close and the red EMA 9 line."""
+    markers, _ = stochastic_trade_events(stochastic, dates)
+    return markers
+
+
+def stochastic_trade_events(stochastic, dates, *, after="", holding=False, ready_to_buy=False):
+    """Replay the chart's signal rules, optionally resuming a previous scan."""
     closes = stochastic["EMA 3"]
     red = stochastic["EMA 9"]
     markers = []
-    ready_to_buy = False
-    holding = False
     for day, previous, current, previous_red, current_red in zip(
         dates, closes.shift(), closes, red.shift(), red,
     ):
-        if pd.isna(current) or pd.isna(current_red):
+        signal_date = day.strftime("%Y-%m-%d")
+        if signal_date <= after or pd.isna(current) or pd.isna(current_red):
             continue
         if not holding and current < 25:
             ready_to_buy = True
         if pd.isna(previous) or pd.isna(previous_red):
             continue
         if holding and previous >= previous_red and current < current_red and current < previous:
-            markers.append({"time": day.strftime("%Y-%m-%d"), "position": "aboveBar",
+            markers.append({"time": signal_date, "position": "aboveBar",
                             "color": "#ff6068", "shape": "arrowDown", "text": "Bán"})
             holding = False
             ready_to_buy = current < 25
         elif not holding and ready_to_buy and previous <= previous_red and current > current_red and current > previous:
-            markers.append({"time": day.strftime("%Y-%m-%d"), "position": "belowBar",
+            markers.append({"time": signal_date, "position": "belowBar",
                             "color": "#32d981", "shape": "arrowUp", "text": "Mua"})
             holding = True
             ready_to_buy = False
-    return markers
+    return markers, ready_to_buy
 
 
 def render_lightweight_chart(chart: pd.DataFrame, symbol: str, timeframe: str = "1D") -> None:
