@@ -418,12 +418,18 @@ def render_stock_dashboard():
                 st.caption("Chưa có dữ liệu đối chiếu cho: " + ", ".join(missing_symbols))
 
     with tab_compare:
-        st.subheader("So sánh hai cổ phiếu · Nến Nhật D1")
+        st.subheader("So sánh hai cổ phiếu · Nến Nhật")
         col_a, col_b = st.columns(2)
         with col_a:
             ticker_a = st.text_input("Mã khung trên", value="FPT", key="compare_ticker_a").strip().upper()
         with col_b:
             ticker_b = st.text_input("Mã khung dưới", value="HPG", key="compare_ticker_b").strip().upper()
+        compare_timeframe = st.radio(
+            "Khung nến", options=["1D", "2D", "3D", "1W", "1M"],
+            format_func=lambda x: {"1D": "Ngày", "2D": "2 ngày", "3D": "3 ngày",
+                                   "1W": "Tuần", "1M": "Tháng"}[x],
+            horizontal=True, key="compare_timeframe",
+        )
         compare_days = st.select_slider(
             "Khoảng thời gian", options=[90, 180, 365, 540, 730], value=365,
             format_func=lambda x: f"{x} ngày", key="compare_days",
@@ -438,6 +444,7 @@ def render_stock_dashboard():
                 end_date = date.today().isoformat()
                 charts = []
                 sources = []
+                from stock_compare import aggregate_candles, render_stock_comparison
                 for ticker in (ticker_a, ticker_b):
                     raw, source = fetch_chart_quotes(ticker, start_date, end_date, interval="1D")
                     clean, warning = sanitize_daily_chart_bars(raw)
@@ -445,9 +452,9 @@ def render_stock_dashboard():
                         st.warning(f"{ticker}: {warning}")
                     if clean.empty:
                         raise MarketDataError(f"{ticker} không có dữ liệu nến D1 hợp lệ")
-                    charts.append(add_indicators(clean))
+                    candles = aggregate_candles(clean, compare_timeframe)
+                    charts.append(add_indicators(candles))
                     sources.append(source)
-                from stock_compare import render_stock_comparison
                 render_stock_comparison(charts[0], ticker_a, charts[1], ticker_b)
                 overlap = pd.merge(
                     charts[0][["date", "close"]].rename(columns={"close": "first"}),
@@ -464,6 +471,7 @@ def render_stock_dashboard():
                     st.caption(f"Biến động giá đóng cửa trên {len(overlap)} phiên chung; chưa điều chỉnh cổ tức.")
                 else:
                     st.info("Không đủ hai phiên giao dịch chung để tính biến động.")
+                st.caption(f"Khung {compare_timeframe}: 2D/3D tính theo phiên giao dịch; 1W/1M theo tuần/tháng. Nến đang hình thành có thể chưa đủ phiên.")
                 st.caption(f"Nguồn: {ticker_a} — {sources[0]}; {ticker_b} — {sources[1]}.")
             except Exception as exc:
                 st.error(f"Không tải được so sánh: {exc}")
