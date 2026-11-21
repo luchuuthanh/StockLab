@@ -80,9 +80,9 @@ def render_lightweight_chart(chart: pd.DataFrame, symbol: str) -> None:
 #toolbar{display:flex;gap:6px;overflow-x:auto;padding:8px;white-space:nowrap}
 button{background:#263446;color:#e4eaf2;border:1px solid #415168;border-radius:7px;padding:9px 12px}
 button.active{background:#186b7c;border-color:#32c7c5}#status{padding:4px 10px;min-height:18px;color:#b5c7d8}
-#price{height:410px}#volume{height:90px}#osc{height:145px}#error{padding:12px;color:#f6bd60}
+#price{height:410px}#volume{height:90px}#osc{height:220px}#osc-tools{padding:4px 8px}#osc-tools[hidden]{display:none}#error{padding:12px;color:#f6bd60}
 </style></head><body><div id="toolbar"></div><div id="status">Chạm vào nến để xem giá · Vuốt để xem lịch sử · Chụm hai ngón để thu phóng</div>
-<div id="price"></div><div id="volume"></div><div id="osc"></div><div id="error"></div>
+<div id="price"></div><div id="volume"></div><div id="osc-tools" hidden><button id="candle-focus" type="button" aria-pressed="false">Chỉ xem nến</button></div><div id="osc"></div><div id="error"></div>
 <script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
 <script>
 const data=__DATA__;
@@ -102,7 +102,7 @@ for(const [name,points] of Object.entries(data.ichimoku)){const series=price.add
 for(const [name,points] of Object.entries(data.overlays)){const s=price.addLineSeries({color:colors[name],lineWidth:2,priceLineVisible:false,lastValueVisible:true});s.setData(points);overlay[name]=s;}
 const vol=L.createChart(document.getElementById('volume'),{...base,width:Math.max(320,document.getElementById('volume').clientWidth),height:90,timeScale:{...base.timeScale,visible:false}});
 vol.addHistogramSeries({priceFormat:{type:'volume'},priceScaleId:'right',priceLineVisible:false,lastValueVisible:false}).setData(data.volume);
-const osc=L.createChart(document.getElementById('osc'),{...base,width:Math.max(320,document.getElementById('osc').clientWidth),height:145});
+const osc=L.createChart(document.getElementById('osc'),{...base,width:Math.max(320,document.getElementById('osc').clientWidth),height:220});
 const rsi=osc.addLineSeries({color:'#dba5ff',lineWidth:2,priceLineVisible:false});rsi.setData(data.rsi);
 const rsi30=osc.addLineSeries({color:'#f59e0b',lineWidth:1,lineStyle:2,priceLineVisible:false,lastValueVisible:false});
 const rsi70=osc.addLineSeries({color:'#f59e0b',lineWidth:1,lineStyle:2,priceLineVisible:false,lastValueVisible:false});
@@ -112,15 +112,14 @@ const macd=osc.addLineSeries({color:'#36c6e9',lineWidth:2,priceLineVisible:false
 const signal=osc.addLineSeries({color:'#f8d05a',lineWidth:2,priceLineVisible:false});signal.setData(data.signal);
 const hist=osc.addHistogramSeries({color:'#5aa59c',priceLineVisible:false});hist.setData(data.hist);
 const stochasticBars=osc.addCandlestickSeries({
-    upColor:'#23b86a',downColor:'#ef5350',wickVisible:false,borderVisible:false,
-    priceLineVisible:false,lastValueVisible:false,visible:false,
-    autoscaleInfoProvider:()=>({priceRange:{minValue:0,maxValue:100}})
+    upColor:'#32d981',downColor:'#ff6068',wickVisible:false,borderVisible:false,
+    priceLineVisible:false,lastValueVisible:false,visible:false
 });
 stochasticBars.setData(data.stochasticBars);
 const stochasticColors=['#f3f5fa','#48da87','#fce06a','#ff646a','#ec91ad','#69aaff'];
 const stochasticLines=Object.entries(data.stochastic).map(([name,points],i)=>{
     const series=osc.addLineSeries({
-        title:name,color:stochasticColors[i],lineWidth:i<4?2:1,lineStyle:i<4?0:2,
+        color:stochasticColors[i],lineWidth:1,lineStyle:i<4?0:2,
         priceLineVisible:false,lastValueVisible:false,visible:false
     });
     series.setData(points);
@@ -138,7 +137,28 @@ osc.subscribeCrosshairMove(point=>{
     document.getElementById('status').textContent=data.symbol+' · '+point.time+' · '+values.join(' · ');
 });
 let current='RSI';
-function setMode(name){current=name;for(const [key,series] of Object.entries(modes))for(const s of series)s.applyOptions({visible:key===name});document.querySelectorAll('[data-mode]').forEach(b=>b.classList.toggle('active',b.dataset.mode===name));}
+const oscTools=document.getElementById('osc-tools');
+const candleFocus=document.getElementById('candle-focus');
+function setMode(name){
+    current=name;
+    const stochasticActive=name===stochasticMode;
+    const candlesOnly=stochasticActive&&candleFocus.getAttribute('aria-pressed')==='true';
+    for(const [key,series] of Object.entries(modes)){
+        for(const item of series){
+            item.applyOptions({visible:key===name&&(!candlesOnly||item===stochasticBars)});
+        }
+    }
+    oscTools.hidden=!stochasticActive;
+    document.querySelectorAll('[data-mode]').forEach(b=>b.classList.toggle('active',b.dataset.mode===name));
+}
+candleFocus.onclick=()=>{
+    const active=candleFocus.getAttribute('aria-pressed')!=='true';
+    candleFocus.setAttribute('aria-pressed',String(active));
+    candleFocus.classList.toggle('active',active);
+    candleFocus.textContent=active?'Hiện lại các đường':'Chỉ xem nến';
+    osc.priceScale('right').applyOptions({autoScale:true});
+    setMode(stochasticMode);
+};
 const toolbar=document.getElementById('toolbar');
 const ichiButton=document.createElement('button');ichiButton.textContent='Ichimoku (9,26,52)';ichiButton.onclick=()=>{const on=!ichiButton.classList.contains('active');ichiButton.classList.toggle('active',on);for(const series of Object.values(ichi))series.applyOptions({visible:on});};toolbar.appendChild(ichiButton);
 for(const name of Object.keys(overlay)){const b=document.createElement('button');b.textContent=name;b.className=['EMA7','SMA20','EMA100'].includes(name)?'active':'';overlay[name].applyOptions({visible:b.className==='active'});b.onclick=()=>{const on=!b.classList.contains('active');b.classList.toggle('active',on);overlay[name].applyOptions({visible:on});};toolbar.appendChild(b);}
@@ -191,4 +211,4 @@ for(const [id] of panes)observer.observe(document.getElementById(id));
 } catch(e) {document.getElementById('error').textContent='Lỗi khởi tạo biểu đồ: '+(e && e.message ? e.message : String(e)); console.error(e);}
 }
 </script></body></html>""".replace("__DATA__", payload)
-    components.html(html, height=780, scrolling=False)
+    components.html(html, height=875, scrolling=False)
