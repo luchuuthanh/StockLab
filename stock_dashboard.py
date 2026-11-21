@@ -13,6 +13,11 @@ VNSTOCK_SOURCE_KEYS = {"dnse": ("DNSE_API_KEY", "DNSE_API_SECRET"),
                        "fhsc": ("FHSC_API_KEY",), "ssi": ("SSI_API_KEY", "SSI_API_SECRET"),
                        "tcbs": ("TCBS_API_KEY",)}
 COMPARE_INDICES = {"VN-Index": "VNINDEX", "VN30": "VN30"}
+LONG_HISTORY_DAYS = (5 * 365, 10 * 365, 20 * 365, 30 * 365)
+
+
+def history_label(days: int) -> str:
+    return f"{days // 365} năm" if days in LONG_HISTORY_DAYS else f"{days} ngày"
 class MarketDataError(RuntimeError):
     pass
 
@@ -75,11 +80,10 @@ def fetch_chart_quotes(symbol: str, start_date: str, end_date: str, interval: st
     if interval == "1D":
         try:
             from cophieu68_import import fetch_cophieu68_history
-            history = fetch_cophieu68_history(symbol, max_pages=30)
-            history = history.rename(columns={"date": "date"})
-            history["date"] = pd.to_datetime(history["date"], errors="coerce")
             start = pd.to_datetime(start_date)
             end = pd.to_datetime(end_date)
+            max_pages = 120 if (end - start).days > 730 else 30
+            history = fetch_cophieu68_history(symbol, max_pages=max_pages, start_date=start)
             history = history[(history["date"] >= start) & (history["date"] <= end)]
             normalized = _normalize_quotes(history)
             if len(normalized) >= 20:
@@ -438,11 +442,11 @@ def render_stock_dashboard():
             accept_new_options=True, filter_mode="prefix",
             key="stocklab_chart_symbol_picker",
         )
-        chart_day_options = [260, 365, 520, 730]
+        chart_day_options = [260, 365, 520, 730, *LONG_HISTORY_DAYS]
         chart_days = st.selectbox(
             "Số ngày lịch sử biểu đồ", chart_day_options,
             index=chart_day_options.index(days),
-            format_func=lambda value: f"{value} ngày",
+            format_func=history_label,
             key="stocklab_chart_days",
         )
         index_labels = {code: label for label, code in COMPARE_INDICES.items()}
@@ -474,7 +478,8 @@ def render_stock_dashboard():
             if chart.empty:
                 st.warning("Chưa có dữ liệu OHLC hợp lệ cho mã này.")
             else:
-                last = chart.iloc[-1]
+                first, last = chart.iloc[0], chart.iloc[-1]
+                st.caption(f"Dữ liệu thực tế: {first['date']:%d/%m/%Y} đến {last['date']:%d/%m/%Y} · {len(chart):,} phiên.")
                 p1, p2, p3, p4, p5 = st.columns(5)
                 close_label = "Điểm đóng cửa" if selected in COMPARE_INDICES else "Giá đóng cửa"
                 p1.metric(close_label, f"{last['close']:,.2f}")
@@ -533,8 +538,8 @@ def render_stock_dashboard():
             horizontal=True, key="compare_timeframe",
         )
         compare_days = st.select_slider(
-            "Khoảng thời gian", options=[90, 180, 365, 540, 730], value=365,
-            format_func=lambda x: f"{x} ngày", key="compare_days",
+            "Khoảng thời gian", options=[90, 180, 365, 540, 730, *LONG_HISTORY_DAYS], value=365,
+            format_func=history_label, key="compare_days",
         )
         if not ticker_a or not ticker_b or ticker_a == ticker_b:
             st.info("Nhập hai mã cổ phiếu khác nhau.")
@@ -562,6 +567,9 @@ def render_stock_dashboard():
                     charts.append(add_indicators(candles))
                     sources.append(source)
                 render_stock_comparison(charts[0], ticker_a, charts[1], ticker_b)
+                for ticker, candles in zip((ticker_a, ticker_b), charts):
+                    dates = candles["date"]
+                    st.caption(f"{ticker}: {dates.min():%d/%m/%Y} đến {dates.max():%d/%m/%Y} · {len(candles):,} nến.")
                 overlap = pd.merge(
                     charts[0][["date", "close"]].rename(columns={"close": "first"}),
                     charts[1][["date", "close"]].rename(columns={"close": "second"}),

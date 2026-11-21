@@ -68,6 +68,7 @@ def fetch_cophieu68_listing() -> pd.DataFrame:
     import re
     import requests
     frames = []
+    oldest = None
     session = requests.Session()
     session.headers.update({"User-Agent": "Mozilla/5.0", "Referer": "https://cophieu68.vn/"})
     for exchange, stcid in (("HOSE", "1"), ("HNX", "2"), ("UPCOM", "3")):
@@ -96,7 +97,9 @@ def fetch_cophieu68_listing() -> pd.DataFrame:
     return pd.concat(frames, ignore_index=True).drop_duplicates("symbol").reset_index(drop=True)
 
 
-def fetch_cophieu68_history(symbol: str, max_pages: int = 10) -> pd.DataFrame:
+def fetch_cophieu68_history(
+    symbol: str, max_pages: int = 10, start_date: pd.Timestamp | None = None,
+) -> pd.DataFrame:
     """Read public paginated OHLCV history from Cophieu68."""
     import requests
     symbol = symbol.strip().upper()
@@ -144,10 +147,14 @@ def fetch_cophieu68_history(symbol: str, max_pages: int = 10) -> pd.DataFrame:
                 "volume": numeric(vol_s)
             }).dropna(subset=["date", "open", "high", "low", "close", "volume"])
             if not part.empty:
+                page_oldest = part["date"].min()
+                if oldest is not None and page_oldest >= oldest:
+                    break
+                oldest = page_oldest
                 frames.append(part)
                 found = True
                 break
-        if not found:
+        if not found or (start_date is not None and oldest <= start_date):
             break
     if not frames:
         raise ValueError("Không đọc được bảng lịch sử OHLCV từ Cophieu68")
