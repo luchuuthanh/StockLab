@@ -46,6 +46,14 @@ def render_lightweight_chart(chart: pd.DataFrame, symbol: str) -> None:
     ichimoku = {"Tenkan": ichipoints(tenkan), "Kijun": ichipoints(kijun),
                 "SenkouA": ichipoints(span_a, 26), "SenkouB": ichipoints(span_b, 26),
                 "Chikou": ichipoints(ordered["close"], -26)}
+    close_window = ordered["close"].rolling(20)
+    bb_middle = close_window.mean()
+    bb_width = 2 * close_window.std(ddof=0)
+    bollinger = {
+        "upper": ichipoints(bb_middle + bb_width),
+        "middle": ichipoints(bb_middle),
+        "lower": ichipoints(bb_middle - bb_width),
+    }
     chart = ordered
     def points(column):
         return [{"time": d.strftime("%Y-%m-%d"), "value": round(float(v), 6)}
@@ -71,7 +79,7 @@ def render_lightweight_chart(chart: pd.DataFrame, symbol: str) -> None:
                           "overlays": {k: points(k) for k in ("EMA7", "SMA20", "EMA20", "EMA50", "EMA100")},
                           "rsi": points("RSI14"), "macd": points("MACD"),
                           "signal": points("MACD_SIGNAL"), "hist": points("MACD_HIST"),
-                          "symbol": symbol, "ichimoku": ichimoku,
+                          "symbol": symbol, "ichimoku": ichimoku, "bollinger": bollinger,
                           "timeline": [day.strftime("%Y-%m-%d") for day in projected_dates],
                           "stochastic": {name: ichipoints(values) for name, values in stochastic.items()},
                           "stochasticBars": stochastic_bars}, ensure_ascii=True).replace("</", "<\\/")
@@ -96,6 +104,14 @@ const candle=price.addCandlestickSeries({upColor:'#26a69a',downColor:'#ef5350',w
 candle.setData(data.candles);
 const colors={EMA7:'#f8d05a',SMA20:'#37c3ff',EMA20:'#b48bff',EMA50:'#f59e73',EMA100:'#e5e7eb'};
 const overlay={};
+const bbSeries=Object.entries(data.bollinger).map(([band,points])=>{
+    const middle=band==='middle';
+    const series=price.addLineSeries({color:middle?'#8eb9f3':'#678ff2',
+        lineWidth:middle?1:2,lineStyle:middle?2:0,
+        priceLineVisible:false,lastValueVisible:false,visible:false});
+    series.setData(points);
+    return series;
+});
 const ichiColors={Tenkan:'#ff9d43',Kijun:'#e95bb5',SenkouA:'#29bd88',SenkouB:'#f87171',Chikou:'#9acaff'};
 const ichi={};
 for(const [name,points] of Object.entries(data.ichimoku)){const series=price.addLineSeries({color:ichiColors[name],lineWidth:2,priceLineVisible:false,lastValueVisible:false,visible:false});series.setData(points);ichi[name]=series;}
@@ -162,6 +178,17 @@ candleFocus.onclick=()=>{
     setMode(stochasticMode);
 };
 const toolbar=document.getElementById('toolbar');
+const bbButton=document.createElement('button');
+bbButton.textContent='BB';
+bbButton.title='Bollinger Bands (20, 2)';
+bbButton.setAttribute('aria-pressed','false');
+bbButton.onclick=()=>{
+    const on=bbButton.getAttribute('aria-pressed')!=='true';
+    bbButton.setAttribute('aria-pressed',String(on));
+    bbButton.classList.toggle('active',on);
+    for(const series of bbSeries)series.applyOptions({visible:on});
+};
+toolbar.appendChild(bbButton);
 const ichiButton=document.createElement('button');ichiButton.textContent='Ichimoku (9,26,52)';ichiButton.onclick=()=>{const on=!ichiButton.classList.contains('active');ichiButton.classList.toggle('active',on);for(const series of Object.values(ichi))series.applyOptions({visible:on});};toolbar.appendChild(ichiButton);
 for(const name of Object.keys(overlay)){const b=document.createElement('button');b.textContent=name;b.className=['EMA7','SMA20','EMA100'].includes(name)?'active':'';overlay[name].applyOptions({visible:b.className==='active'});b.onclick=()=>{const on=!b.classList.contains('active');b.classList.toggle('active',on);overlay[name].applyOptions({visible:on});};toolbar.appendChild(b);}
 for(const name of Object.keys(modes)){const b=document.createElement('button');b.textContent=name;b.dataset.mode=name;b.onclick=()=>setMode(name);toolbar.appendChild(b);}
