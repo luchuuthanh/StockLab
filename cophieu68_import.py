@@ -68,7 +68,6 @@ def fetch_cophieu68_listing() -> pd.DataFrame:
     import re
     import requests
     frames = []
-    oldest = None
     session = requests.Session()
     session.headers.update({"User-Agent": "Mozilla/5.0", "Referer": "https://cophieu68.vn/"})
     for exchange, stcid in (("HOSE", "1"), ("HNX", "2"), ("UPCOM", "3")):
@@ -106,6 +105,7 @@ def fetch_cophieu68_history(
     if not symbol.isalnum() or not 3 <= len(symbol) <= 6:
         raise ValueError("Mã cổ phiếu không hợp lệ")
     frames = []
+    oldest = None
     session = requests.Session()
     session.headers.update({"User-Agent": "Mozilla/5.0", "Referer": "https://cophieu68.vn/"})
     for page in range(1, max_pages + 1):
