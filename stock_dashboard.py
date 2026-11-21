@@ -509,10 +509,11 @@ def render_stock_dashboard():
         symbol for symbol in available_symbols if symbol.replace("-", "") not in index_codes
     )]
 
+    default_chart_symbol = "VN-Index"
     with tab_chart:
         selected_symbols = st.multiselect(
             "Tìm mã cổ phiếu hoặc chỉ số", symbol_options,
-            default=["AAM"] if "AAM" in symbol_options else [],
+            default=[default_chart_symbol],
             placeholder="Gõ chữ đầu của mã, ví dụ F hoặc VN",
             help="Chọn một hoặc nhiều mã. Mã đầu tiên sẽ hiện trên biểu đồ.",
             accept_new_options=True, filter_mode="prefix",
@@ -537,7 +538,7 @@ def render_stock_dashboard():
             symbol = index_labels.get(symbol.replace("-", ""), symbol)
             if symbol and symbol not in chart_symbols:
                 chart_symbols.append(symbol)
-        selected = chart_symbols[0] if chart_symbols else "AAM"
+        selected = chart_symbols[0] if chart_symbols else default_chart_symbol
         st.caption("Biểu đồ hiển thị mã đầu tiên. Bảng đối chiếu bên dưới dùng dữ liệu quét cổ phiếu.")
         try:
             from stock_compare import aggregate_candles
