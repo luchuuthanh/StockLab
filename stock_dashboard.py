@@ -124,7 +124,7 @@ def fetch_index_chart_quotes(symbol: str, start_date: str, end_date: str) -> tup
     try:
         response = requests.get(f"https://simplize.vn/chi-so/{symbol}/lich-su-gia", timeout=10)
         response.raise_for_status()
-        for table in pd.read_html(StringIO(response.text)):
+        for table in pd.read_html(StringIO(response.text), flavor="lxml"):
             columns = {"Ngày": "time", "Mở cửa": "open", "Cao": "high", "Thấp": "low",
                        "Đóng cửa": "close", "Tổng khối lượng": "volume"}
             if not set(columns).issubset(table.columns):
@@ -137,6 +137,27 @@ def fetch_index_chart_quotes(symbol: str, start_date: str, end_date: str) -> tup
             quotes = quotes[quotes["date"].between(start_date, end_date)]
             if not quotes.empty:
                 return quotes, "Simplize · số phiên công khai"
+    except (requests.RequestException, ValueError):
+        pass
+
+    try:
+        slug = {"VNINDEX": "vn-index", "VN30": "vn-30"}[symbol]
+        response = requests.get(f"https://www.investing.com/indices/{slug}-historical-data", timeout=10)
+        response.raise_for_status()
+        for table in pd.read_html(StringIO(response.text), flavor="lxml"):
+            columns = {"Date": "time", "Open": "open", "High": "high", "Low": "low",
+                       "Price": "close", "Vol.": "volume"}
+            if not set(columns).issubset(table.columns):
+                continue
+            bars = table[list(columns)].rename(columns=columns)
+            bars["time"] = pd.to_datetime(bars["time"], format="%b %d, %Y", errors="coerce")
+            volume = bars["volume"].astype(str).str.strip().str.extract(r"^([0-9.,]+)\s*([KMB]?)$")
+            bars["volume"] = (pd.to_numeric(volume[0].str.replace(",", "", regex=False), errors="coerce")
+                              * volume[1].map({"": 1, "K": 1e3, "M": 1e6, "B": 1e9}))
+            quotes = _normalize_quotes(bars).dropna(subset=["volume"])
+            quotes = quotes[quotes["date"].between(start_date, end_date)]
+            if not quotes.empty:
+                return quotes, "Investing.com · số phiên công khai"
     except (requests.RequestException, ValueError):
         pass
 
