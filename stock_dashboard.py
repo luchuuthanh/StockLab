@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
+from io import StringIO
 import os
 import pandas as pd
 import requests
@@ -119,6 +120,25 @@ def fetch_index_chart_quotes(symbol: str, start_date: str, end_date: str) -> tup
                 return quotes, f"{source} · chỉ số"
         except (requests.RequestException, KeyError, ValueError, TypeError):
             continue
+
+    try:
+        response = requests.get(f"https://simplize.vn/chi-so/{symbol}/lich-su-gia", timeout=10)
+        response.raise_for_status()
+        for table in pd.read_html(StringIO(response.text)):
+            columns = {"Ngày": "time", "Mở cửa": "open", "Cao": "high", "Thấp": "low",
+                       "Đóng cửa": "close", "Tổng khối lượng": "volume"}
+            if not set(columns).issubset(table.columns):
+                continue
+            bars = table[list(columns)].rename(columns=columns)
+            bars["time"] = pd.to_datetime(bars["time"], format="%d/%m/%Y", errors="coerce")
+            for column in ("open", "high", "low", "close", "volume"):
+                bars[column] = bars[column].astype(str).str.replace(",", "", regex=False)
+            quotes = _normalize_quotes(bars).dropna(subset=["volume"])
+            quotes = quotes[quotes["date"].between(start_date, end_date)]
+            if not quotes.empty:
+                return quotes, "Simplize · số phiên công khai"
+    except (requests.RequestException, ValueError):
+        pass
 
     try:
         return fetch_daily_quotes(symbol, start_date, end_date, is_index=True)
