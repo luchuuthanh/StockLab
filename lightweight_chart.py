@@ -160,17 +160,21 @@ if(!window.LightweightCharts){document.getElementById('error').textContent='Lỗ
 else {try {
 const L=window.LightweightCharts;
 const compactScreen=window.matchMedia('(max-width: 600px)');
+const chartFrame=window.frameElement;
+let signalExtraHeight=0;
+const baseAxisWidth=84;
 function chartSizes(){
     if(!compactScreen.matches)return {price:410,volume:90,indicator:220,header:36};
     const header=30;
     const controlsHeight=document.getElementById('toolbar').offsetHeight
         +document.getElementById('status').offsetHeight;
-    const plotHeight=Math.max(390,window.innerHeight-controlsHeight-2*header-8);
+    const frameHeight=chartFrame?chartFrame.clientHeight-signalExtraHeight:window.innerHeight;
+    const plotHeight=Math.max(390,frameHeight-controlsHeight-2*header-8);
     const price=Math.round(plotHeight*0.44);
     const volume=Math.round(plotHeight*0.11);
     return {price,volume,indicator:Math.floor((plotHeight-price-volume)/2),header};
 }
-const base={crosshair:{vertLine:{visible:false,labelVisible:false},horzLine:{visible:true,labelVisible:true}},layout:{background:{type:'solid',color:'#101722'},textColor:'#c8d2df'},grid:{vertLines:{color:'#1b2736'},horzLines:{color:'#1b2736'}},rightPriceScale:{borderColor:'#35465a',minimumWidth:76},timeScale:{borderColor:'#35465a',timeVisible:false},handleScroll:{mouseWheel:true,pressedMouseMove:true,horzTouchDrag:true,vertTouchDrag:false},handleScale:{mouseWheel:true,pinch:true,axisPressedMouseMove:true}};
+const base={crosshair:{vertLine:{visible:false,labelVisible:false},horzLine:{visible:true,labelVisible:true}},layout:{background:{type:'solid',color:'#101722'},textColor:'#c8d2df'},grid:{vertLines:{color:'#1b2736'},horzLines:{color:'#1b2736'}},rightPriceScale:{borderColor:'#35465a',minimumWidth:baseAxisWidth},timeScale:{borderColor:'#35465a',timeVisible:false},handleScroll:{mouseWheel:true,pressedMouseMove:true,horzTouchDrag:true,vertTouchDrag:false},handleScale:{mouseWheel:true,pinch:true,axisPressedMouseMove:true}};
 const price=L.createChart(document.getElementById('price'),{...base,width:Math.max(320,document.getElementById('price').clientWidth),height:chartSizes().price});
 const candle=price.addCandlestickSeries({upColor:'#26a69a',downColor:'#ef5350',wickUpColor:'#26a69a',wickDownColor:'#ef5350',borderVisible:false});
 candle.setData(data.candles);
@@ -248,8 +252,16 @@ function resizeChartPanes(){
     };
     resize(document.getElementById('price'),price,priceHeight,!compactScreen.matches);
     resize(document.getElementById('volume'),vol,volumeHeight,false);
+    const expandSignal=lastIndicator===1&&selectedModes.includes(stochasticMode);
+    const extraHeight=expandSignal&&chartFrame?indicator:0;
+    if(extraHeight!==signalExtraHeight){
+        signalExtraHeight=extraHeight;
+        chartFrame.style.setProperty('--stocklab-signal-extra', extraHeight+'px');
+    }
+    const indicatorHeight=expandSignal&&!chartFrame?Math.floor(indicator*2/3):indicator;
     indicatorPanes.slice(0,selectedModes.length).forEach((pane,i)=>{
-        const height=lastIndicator===0?indicator*2+header:indicator;
+        const height=lastIndicator===0?indicator*2+header:
+            indicatorHeight*(selectedModes[i]===stochasticMode?2:1);
         resize(pane.root,pane.chart,height,!compactScreen.matches||i===lastIndicator);
     });
 }
@@ -363,7 +375,7 @@ const readouts=panes.map(([id,chart])=>{
     note.className='session-values';
     line.hidden=note.hidden=true;
     root.append(line,note);
-    return {root,chart,scale:chart.timeScale(),line,note};
+    return {root,chart,line,note};
 });
 const qty=new Intl.NumberFormat('vi-VN');
 let selectedDate;
@@ -390,8 +402,8 @@ function drawSession(){
             ...visibleValues(indicatorPanes[i].display[mode],mode==='MACD'?3:2)
         ].join(' · '))
     ];
-    readouts.forEach(({root,chart,scale,line,note},i)=>{
-        const x=scale.timeToCoordinate(selectedDate);
+    const x=price.timeScale().timeToCoordinate(selectedDate);
+    readouts.forEach(({root,chart,line,note},i)=>{
         const inView=x!==null&&x>=0&&x<root.clientWidth-chart.priceScale('right').width();
         line.hidden=!inView;
         note.hidden=!inView||notesButton.getAttribute('aria-pressed')!=='true';
@@ -405,12 +417,13 @@ function selectSession(point){
     if(!pricesByDate.has(point.time))return;
     selectedDate=point.time;
     drawSession();
+    scheduleLayoutUpdate();
 }
 for(const [,chart] of panes){
     chart.subscribeClick(selectSession);
     chart.subscribeCrosshairMove(selectSession);
 }
-toolbar.addEventListener('click',drawSession);
+toolbar.addEventListener('click',scheduleLayoutUpdate);
 function equalRange(a,b){
     return a&&b&&Math.abs(a.from-b.from)<1e-6&&Math.abs(a.to-b.to)<1e-6;
 }
@@ -428,9 +441,25 @@ function syncRange(source,range){
         rangeUpdateInProgress=false;
     }
 }
+let layoutFrame=0;
+let sharedAxisWidth=baseAxisWidth;
+function scheduleLayoutUpdate(){
+    if(layoutFrame)return;
+    layoutFrame=requestAnimationFrame(()=>{
+        layoutFrame=0;
+        const visiblePanes=readouts.filter(({root})=>root.clientWidth>0);
+        const axisWidth=Math.max(sharedAxisWidth,...visiblePanes.map(({chart})=>chart.priceScale('right').width()));
+        if(axisWidth>sharedAxisWidth){
+            sharedAxisWidth=axisWidth;
+            for(const [,chart] of panes)chart.priceScale('right').applyOptions({minimumWidth:axisWidth});
+            scheduleLayoutUpdate();
+        }
+        drawSession();
+    });
+}
 for(const scale of scales)scale.subscribeVisibleLogicalRangeChange(range=>{
     syncRange(scale,range);
-    drawSession();
+    scheduleLayoutUpdate();
 });
 document.getElementById('status').textContent=data.symbol+' · '+data.candles.length+' '+data.barUnit+' · Vuốt để xem lịch sử · Chụm hai ngón để thu phóng';
 renderIndicators();
@@ -453,8 +482,9 @@ const observer=new ResizeObserver(()=>{
 for(const [id] of panes)observer.observe(document.getElementById(id));
 window.addEventListener('resize',()=>{
     renderIndicators();
-    drawSession();
+    scheduleLayoutUpdate();
 });
+scheduleLayoutUpdate();
 } catch(e) {document.getElementById('error').textContent='Lỗi khởi tạo biểu đồ: '+(e && e.message ? e.message : String(e)); console.error(e);}
 }
 </script></body></html>""".replace("__DATA__", payload)
@@ -462,10 +492,14 @@ window.addEventListener('resize',()=>{
         st.html("""
             <style>
                 .st-key-stocklab_technical_chart { container-type: inline-size; }
+                .st-key-stocklab_technical_chart iframe {
+                    --stocklab-chart-base-height: 1100px;
+                    height: calc(var(--stocklab-chart-base-height) + var(--stocklab-signal-extra, 0px)) !important;
+                }
                 @container (max-width: 600px) {
                     .st-key-stocklab_technical_chart iframe {
-                        height: 750px !important;
-                        height: clamp(650px, calc(100svh - 36px), 780px) !important;
+                        --stocklab-chart-base-height: 750px;
+                        --stocklab-chart-base-height: clamp(650px, calc(100svh - 36px), 780px);
                     }
                 }
             </style>
