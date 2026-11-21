@@ -1,34 +1,20 @@
-"""Vietnam stock scanner using Vnstock data sources with VCI/KBS fallback."""
+"""Vietnam stock scanner and technical charts."""
 from __future__ import annotations
 
 from datetime import date, timedelta
 import os
 import pandas as pd
+import requests
 import streamlit as st
 
 EXCHANGES = {"HOSE", "HNX", "UPCOM"}
-DATA_SOURCES = ("vci", "kbs")
+VNSTOCK_SOURCE_KEYS = {"dnse": ("DNSE_API_KEY", "DNSE_API_SECRET"),
+                       "fhsc": ("FHSC_API_KEY",), "ssi": ("SSI_API_KEY", "SSI_API_SECRET"),
+                       "tcbs": ("TCBS_API_KEY",)}
 COMPARE_INDICES = {"VN-Index": "VNINDEX", "VN30": "VN30"}
-_VNSTOCK_AUTH_READY = False
-
 class MarketDataError(RuntimeError):
     pass
 
-def _vnstock_classes():
-    global _VNSTOCK_AUTH_READY
-    try:
-        import vnstock
-        from vnstock import Listing, Quote
-        api_key = os.getenv("VNSTOCK_API_KEY", "").strip()
-        if api_key and not _VNSTOCK_AUTH_READY:
-            vnstock.login(api_key)
-            _VNSTOCK_AUTH_READY = True
-        return Listing, Quote
-    except Exception as exc:
-        raise MarketDataError(
-            "Không nạp được Vnstock. Hãy kiểm tra gói vnstock trong requirements.txt "
-            "và khởi động lại ứng dụng. Chi tiết: " + str(exc)
-        ) from exc
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_instruments() -> pd.DataFrame:
@@ -60,19 +46,27 @@ def _normalize_quotes(payload) -> pd.DataFrame:
     return df.dropna(subset=["date", "open", "high", "low", "close"]).sort_values("date").drop_duplicates("date").reset_index(drop=True)
 
 @st.cache_data(ttl=900, show_spinner=False)
-def fetch_daily_quotes(symbol: str, start_date: str, end_date: str, interval: str = "1D") -> pd.DataFrame:
-    _, Quote = _vnstock_classes()
-    errors = []
-    for source in DATA_SOURCES:
+def fetch_daily_quotes(symbol: str, start_date: str, end_date: str, interval: str = "1D",
+                       is_index: bool = False) -> tuple[pd.DataFrame, str]:
+    """Load OHLCV from a configured Vnstock 6 provider."""
+    sources = [name for name, keys in VNSTOCK_SOURCE_KEYS.items()
+               if all(os.getenv(key, "").strip() for key in keys)]
+    if not sources:
+        raise MarketDataError("Chưa cấu hình nguồn Vnstock 6.")
+    from vnstock import Market
+
+    for source in sources:
         try:
-            raw = Quote(source=source, symbol=symbol).history(start=start_date, end=end_date, interval=interval)
-            df = _normalize_quotes(raw)
-            if not df.empty:
-                return df
-            errors.append(f"{source}: không có dữ liệu")
-        except Exception as exc:
-            errors.append(f"{source}: {exc}")
-    raise MarketDataError(f"Không tải được lịch sử {symbol}. " + " | ".join(errors))
+            market = Market(source)
+            asset = market.index(symbol) if is_index else market.equity(symbol)
+            raw = asset.ohlcv(start=start_date, end=end_date, interval=interval)
+            quotes = _normalize_quotes(raw).dropna(subset=["volume"])
+            if not quotes.empty:
+                return quotes, f"Vnstock {source.upper()}"
+        except Exception:
+            continue
+    raise MarketDataError(f"Nguồn Vnstock đã cấu hình không trả dữ liệu cho {symbol}.")
+
 
 @st.cache_data(ttl=900, show_spinner=False)
 def fetch_chart_quotes(symbol: str, start_date: str, end_date: str, interval: str = "1D") -> tuple[pd.DataFrame, str]:
@@ -96,27 +90,40 @@ def fetch_chart_quotes(symbol: str, start_date: str, end_date: str, interval: st
     else:
         cp68_error = "Cophieu68 chỉ dùng cho biểu đồ ngày 1D"
     try:
-        return fetch_daily_quotes(symbol, start_date, end_date, interval), "Vnstock VCI/KBS"
+        return fetch_daily_quotes(symbol, start_date, end_date, interval)
     except Exception as exc:
         raise MarketDataError(f"Cophieu68: {cp68_error}. Vnstock: {exc}") from exc
 
 @st.cache_data(ttl=900, show_spinner=False)
 def fetch_index_chart_quotes(symbol: str, start_date: str, end_date: str) -> tuple[pd.DataFrame, str]:
-    """Load daily OHLCV through Vnstock's domestic index interface."""
-    _vnstock_classes()
-    from vnstock import Market
-
-    errors = []
-    for source in DATA_SOURCES:
+    """Load index candles from public chart feeds, then configured Vnstock."""
+    start = pd.Timestamp(start_date, tz="Asia/Ho_Chi_Minh")
+    end = pd.Timestamp(end_date, tz="Asia/Ho_Chi_Minh") + pd.Timedelta(days=1)
+    params = {"symbol": symbol, "resolution": "D", "from": int(start.timestamp()),
+              "to": int(end.timestamp()) - 1}
+    providers = (
+        ("VNDIRECT", "https://dchart-api.vndirect.com.vn/dchart/history"),
+        ("VPS", "https://histdatafeed.vps.com.vn/tradingview/history"),
+    )
+    columns = {"t": "time", "o": "open", "h": "high", "l": "low", "c": "close", "v": "volume"}
+    for source, url in providers:
         try:
-            raw = Market(source).index(symbol).ohlcv(start=start_date, end=end_date, interval="1D")
-            quotes = _normalize_quotes(raw).dropna(subset=["volume"])
+            response = requests.get(url, params=params, timeout=10)
+            response.raise_for_status()
+            payload = response.json()
+            bars = pd.DataFrame({name: payload[key] for key, name in columns.items()})
+            bars["time"] = pd.to_datetime(bars["time"], unit="s", utc=True, errors="coerce")
+            quotes = _normalize_quotes(bars).dropna(subset=["volume"])
+            quotes = quotes[quotes["date"].between(start_date, end_date)]
             if not quotes.empty:
-                return quotes, f"Vnstock {source.upper()} · chỉ số"
-            errors.append(f"{source}: không có dữ liệu")
-        except Exception as exc:
-            errors.append(f"{source}: {exc}")
-    raise MarketDataError(f"Không tải được lịch sử {symbol}. " + " | ".join(errors))
+                return quotes, f"{source} · chỉ số"
+        except (requests.RequestException, KeyError, ValueError, TypeError):
+            continue
+
+    try:
+        return fetch_daily_quotes(symbol, start_date, end_date, is_index=True)
+    except Exception as exc:
+        raise MarketDataError(f"Nguồn dữ liệu chưa trả được nến cho {symbol}.") from exc
 
 
 def sanitize_daily_chart_bars(df: pd.DataFrame) -> tuple[pd.DataFrame, str | None]:
@@ -179,7 +186,8 @@ def _scan_market_uncached_v2(instruments: pd.DataFrame, lookback_days: int = 260
     for i, item in enumerate(symbols):
         symbol = item["symbol"]
         try:
-            hist = add_indicators(fetch_daily_quotes(symbol, start, end))
+            quotes, _ = fetch_daily_quotes(symbol, start, end)
+            hist = add_indicators(quotes)
             valid = hist.dropna(subset=["EMA100", "MOM10", "ROC14", "VOL20"])
             if not valid.empty:
                 last = valid.iloc[-1]
@@ -248,7 +256,7 @@ def render_stock_dashboard():
     st.header("📈 STOCKLAB VIỆT NAM")
     st.caption("Bảng giá · Bộ lọc cổ phiếu · Biểu đồ nến · EMA · RSI · MACD · Khối lượng")
 
-    st.caption("Nguồn dữ liệu: quét thị trường tự động từ Cophieu68; biểu đồ ngày ưu tiên Cophieu68, dữ liệu intraday dùng Vnstock VCI/KBS. Có thể chạy chế độ Khách; đặt VNSTOCK_API_KEY trong Secrets để dùng hạn mức tài khoản Cộng đồng.")
+    st.caption("Nguồn dữ liệu: Cophieu68 cho bảng quét và biểu đồ cổ phiếu ngày. Biểu đồ chỉ số ưu tiên nguồn công khai.")
 
     left, right = st.columns([1, 1])
     with left:
