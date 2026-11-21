@@ -333,7 +333,7 @@ def render_stock_dashboard():
             with st.expander(f"Lỗi dữ liệu trong các lượt quét ({len(stats['errors'])})"):
                 st.write(stats["errors"][-50:])
 
-    tab_scan, tab_chart, tab_all = st.tabs(["🔎 Bộ lọc cổ phiếu", "📊 Biểu đồ kỹ thuật", "📋 Toàn bộ thị trường"])
+    tab_scan, tab_chart, tab_compare, tab_all = st.tabs(["🔎 Bộ lọc cổ phiếu", "📊 Biểu đồ kỹ thuật", "🕯️ So sánh 2 CP", "📋 Toàn bộ thị trường"])
     with tab_scan:
         mom_tab, roc_tab = st.tabs(["MOM10 ≥ ngưỡng", "ROC14 ≥ ngưỡng"])
         with mom_tab:
@@ -416,6 +416,57 @@ def render_stock_dashboard():
             missing_symbols = [symbol for symbol in chart_symbols if symbol not in set(comparison["Mã"].astype(str).str.upper())]
             if missing_symbols:
                 st.caption("Chưa có dữ liệu đối chiếu cho: " + ", ".join(missing_symbols))
+
+    with tab_compare:
+        st.subheader("So sánh hai cổ phiếu · Nến Nhật D1")
+        col_a, col_b = st.columns(2)
+        with col_a:
+            ticker_a = st.text_input("Mã khung trên", value="FPT", key="compare_ticker_a").strip().upper()
+        with col_b:
+            ticker_b = st.text_input("Mã khung dưới", value="HPG", key="compare_ticker_b").strip().upper()
+        compare_days = st.select_slider(
+            "Khoảng thời gian", options=[90, 180, 365, 540, 730], value=365,
+            format_func=lambda x: f"{x} ngày", key="compare_days",
+        )
+        if not ticker_a or not ticker_b or ticker_a == ticker_b:
+            st.info("Nhập hai mã cổ phiếu khác nhau.")
+        elif not all(3 <= len(t) <= 6 and t.isalnum() for t in (ticker_a, ticker_b)):
+            st.warning("Mỗi mã phải có 3–6 ký tự chữ hoặc số.")
+        else:
+            try:
+                start_date = (date.today() - timedelta(days=compare_days)).isoformat()
+                end_date = date.today().isoformat()
+                charts = []
+                sources = []
+                for ticker in (ticker_a, ticker_b):
+                    raw, source = fetch_chart_quotes(ticker, start_date, end_date, interval="1D")
+                    clean, warning = sanitize_daily_chart_bars(raw)
+                    if warning:
+                        st.warning(f"{ticker}: {warning}")
+                    if clean.empty:
+                        raise MarketDataError(f"{ticker} không có dữ liệu nến D1 hợp lệ")
+                    charts.append(add_indicators(clean))
+                    sources.append(source)
+                from stock_compare import render_stock_comparison
+                render_stock_comparison(charts[0], ticker_a, charts[1], ticker_b)
+                overlap = pd.merge(
+                    charts[0][["date", "close"]].rename(columns={"close": "first"}),
+                    charts[1][["date", "close"]].rename(columns={"close": "second"}),
+                    on="date", how="inner",
+                ).sort_values("date")
+                if len(overlap) >= 2:
+                    change_a = (overlap["first"].iloc[-1] / overlap["first"].iloc[0] - 1) * 100
+                    change_b = (overlap["second"].iloc[-1] / overlap["second"].iloc[0] - 1) * 100
+                    a, b, diff = st.columns(3)
+                    a.metric(ticker_a, f"{change_a:+.2f}%")
+                    b.metric(ticker_b, f"{change_b:+.2f}%")
+                    diff.metric("Chênh lệch", f"{change_a-change_b:+.2f} điểm %")
+                    st.caption(f"Biến động giá đóng cửa trên {len(overlap)} phiên chung; chưa điều chỉnh cổ tức.")
+                else:
+                    st.info("Không đủ hai phiên giao dịch chung để tính biến động.")
+                st.caption(f"Nguồn: {ticker_a} — {sources[0]}; {ticker_b} — {sources[1]}.")
+            except Exception as exc:
+                st.error(f"Không tải được so sánh: {exc}")
 
     with tab_all:
         st.subheader("Bảng dữ liệu toàn thị trường")
