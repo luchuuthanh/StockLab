@@ -89,6 +89,11 @@ def render_lightweight_chart(chart: pd.DataFrame, symbol: str) -> None:
 button{background:#263446;color:#e4eaf2;border:1px solid #415168;border-radius:7px;padding:9px 12px}
 button.active{background:#186b7c;border-color:#32c7c5}#status{padding:4px 10px;min-height:18px;color:#b5c7d8}
 #price{height:410px}#volume{height:90px}#osc{height:220px}#osc-tools{padding:4px 8px}#osc-tools[hidden]{display:none}#error{padding:12px;color:#f6bd60}
+#price,#volume,#osc{position:relative}
+.session-line,.session-values{position:absolute;z-index:2;pointer-events:none}
+.session-line{top:0;bottom:0;border-left:1px dashed #d7e0ed}
+#price .session-line,#osc .session-line{bottom:26px}
+.session-values{top:4px;left:6px;max-width:calc(100% - 90px);padding:4px 6px;border-radius:4px;background:#101722ee;color:#edf3fb;line-height:1.35;font-size:12px}
 </style></head><body><div id="toolbar"></div><div id="status">Chạm vào nến để xem giá · Vuốt để xem lịch sử · Chụm hai ngón để thu phóng</div>
 <div id="price"></div><div id="volume"></div><div id="osc-tools" hidden><button id="candle-focus" type="button" aria-pressed="false">Chỉ xem nến</button></div><div id="osc"></div><div id="error"></div>
 <script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
@@ -98,7 +103,7 @@ document.getElementById('status').textContent=data.symbol+' · '+data.candles.le
 if(!window.LightweightCharts){document.getElementById('error').textContent='Lỗi tải thư viện biểu đồ từ CDN. Vui lòng kiểm tra kết nối mạng.';}
 else {try {
 const L=window.LightweightCharts;
-const base={layout:{background:{type:'solid',color:'#101722'},textColor:'#c8d2df'},grid:{vertLines:{color:'#1b2736'},horzLines:{color:'#1b2736'}},rightPriceScale:{borderColor:'#35465a',minimumWidth:76},timeScale:{borderColor:'#35465a',timeVisible:false},handleScroll:{mouseWheel:true,pressedMouseMove:true,horzTouchDrag:true,vertTouchDrag:false},handleScale:{mouseWheel:true,pinch:true,axisPressedMouseMove:true}};
+const base={crosshair:{vertLine:{visible:false,labelVisible:false},horzLine:{visible:false,labelVisible:false}},layout:{background:{type:'solid',color:'#101722'},textColor:'#c8d2df'},grid:{vertLines:{color:'#1b2736'},horzLines:{color:'#1b2736'}},rightPriceScale:{borderColor:'#35465a',minimumWidth:76},timeScale:{borderColor:'#35465a',timeVisible:false},handleScroll:{mouseWheel:true,pressedMouseMove:true,horzTouchDrag:true,vertTouchDrag:false},handleScale:{mouseWheel:true,pinch:true,axisPressedMouseMove:true}};
 const price=L.createChart(document.getElementById('price'),{...base,width:Math.max(320,document.getElementById('price').clientWidth),height:410});
 const candle=price.addCandlestickSeries({upColor:'#26a69a',downColor:'#ef5350',wickUpColor:'#26a69a',wickDownColor:'#ef5350',borderVisible:false});
 candle.setData(data.candles);
@@ -146,14 +151,6 @@ const modes={RSI:[rsi,rsi30,rsi70],MACD:[macd,signal,hist],
     [stochasticMode]:[stochasticBars,...stochasticLines.map(([,series])=>series)]};
 const candleFocusSeries=new Set([stochasticBars,...stochasticLines
     .filter(([name])=>name==='Biên trên'||name==='Biên dưới').map(([,series])=>series)]);
-osc.subscribeCrosshairMove(point=>{
-    if(current!==stochasticMode||!point.time)return;
-    const values=stochasticLines.flatMap(([name,series])=>{
-        const value=point.seriesData.get(series)?.value;
-        return value===undefined?[]:[name+' '+value.toFixed(2)];
-    });
-    document.getElementById('status').textContent=data.symbol+' · '+point.time+' · '+values.join(' · ');
-});
 let current='RSI';
 const oscTools=document.getElementById('osc-tools');
 const candleFocus=document.getElementById('candle-focus');
@@ -193,7 +190,6 @@ const ichiButton=document.createElement('button');ichiButton.textContent='Ichimo
 for(const name of Object.keys(overlay)){const b=document.createElement('button');b.textContent=name;b.className=['EMA7','SMA20','EMA100'].includes(name)?'active':'';overlay[name].applyOptions({visible:b.className==='active'});b.onclick=()=>{const on=!b.classList.contains('active');b.classList.toggle('active',on);overlay[name].applyOptions({visible:on});};toolbar.appendChild(b);}
 for(const name of Object.keys(modes)){const b=document.createElement('button');b.textContent=name;b.dataset.mode=name;b.onclick=()=>setMode(name);toolbar.appendChild(b);}
 setMode('RSI');
-price.subscribeCrosshairMove(p=>{if(!p.time)return;const v=p.seriesData.get(candle);if(v)document.getElementById('status').textContent=data.symbol+' · '+p.time+' · O '+v.open+' H '+v.high+' L '+v.low+' C '+v.close;});
 const panes=[['price',price],['volume',vol],['osc',osc]];
 // Every pane needs identical logical indexes, including Ichimoku projection dates.
 const timeline=data.timeline.map(time=>({time,value:0}));
@@ -201,6 +197,70 @@ for(const [,chart] of panes){
     chart.addLineSeries({visible:false,priceLineVisible:false,lastValueVisible:false}).setData(timeline);
 }
 const scales=panes.map(([,chart])=>chart.timeScale());
+const indexByDate=points=>new Map(points.map(point=>[point.time,point]));
+const pricesByDate=indexByDate(data.candles);
+const volumeByDate=indexByDate(data.volume);
+const valueSeries=Object.fromEntries(Object.entries({
+    ...data.overlays,...data.ichimoku,
+    'BB trên':data.bollinger.upper,'BB giữa':data.bollinger.middle,'BB dưới':data.bollinger.lower,
+    RSI:data.rsi,MACD:data.macd,Signal:data.signal,Histogram:data.hist,...data.stochastic
+}).map(([name,points])=>[name,indexByDate(points)]));
+const displayPrice=Object.entries(overlay).concat(Object.entries(ichi),
+    ['BB trên','BB giữa','BB dưới'].map((name,i)=>[name,bbSeries[i]]));
+const displayOsc={RSI:[['RSI',rsi]],MACD:[['MACD',macd],['Signal',signal],['Histogram',hist]],
+    [stochasticMode]:stochasticLines};
+const readouts=panes.map(([id,chart])=>{
+    const root=document.getElementById(id);
+    const line=document.createElement('div');
+    const note=document.createElement('div');
+    line.className='session-line';
+    note.className='session-values';
+    line.hidden=note.hidden=true;
+    root.append(line,note);
+    return {scale:chart.timeScale(),line,note};
+});
+const qty=new Intl.NumberFormat('vi-VN');
+let selectedDate;
+function visibleValues(series,digits){
+    return series.flatMap(([name,seriesApi])=>{
+        const point=valueSeries[name].get(selectedDate);
+        return point&&seriesApi.options().visible?[name+' '+point.value.toFixed(digits)]:[];
+    });
+}
+function drawSession(){
+    if(!selectedDate)return;
+    const bar=pricesByDate.get(selectedDate);
+    const volPoint=volumeByDate.get(selectedDate);
+    const day=selectedDate.split('-').reverse().join('/');
+    const notes=[
+        [day,...['open','high','low','close'].map(key=>key[0].toUpperCase()+' '+bar[key].toFixed(2)),
+            ...visibleValues(displayPrice,2)].join(' · '),
+        volPoint?'Khối lượng '+qty.format(volPoint.value):'Khối lượng —',
+        [day,...(current===stochasticMode&&candleFocus.getAttribute('aria-pressed')==='true'&&valueSeries['EMA 3'].has(selectedDate)
+            ? ['Nến '+valueSeries['EMA 3'].get(selectedDate).value.toFixed(2)] : []),
+            ...visibleValues(displayOsc[current],current==='MACD'?3:2)].join(' · ')
+    ];
+    readouts.forEach(({scale,line,note},i)=>{
+        const x=scale.timeToCoordinate(selectedDate);
+        const inView=x!==null&&x>=0&&x<scale.width();
+        line.hidden=note.hidden=!inView;
+        if(inView){
+            line.style.left=x+'px';
+            note.textContent=notes[i];
+        }
+    });
+}
+function selectSession(point){
+    if(!pricesByDate.has(point.time))return;
+    selectedDate=point.time;
+    drawSession();
+}
+for(const [,chart] of panes){
+    chart.subscribeClick(selectSession);
+    chart.subscribeCrosshairMove(selectSession);
+}
+toolbar.addEventListener('click',drawSession);
+oscTools.addEventListener('click',drawSession);
 function equalRange(a,b){
     return a&&b&&Math.abs(a.from-b.from)<1e-6&&Math.abs(a.to-b.to)<1e-6;
 }
@@ -218,7 +278,10 @@ function syncRange(source,range){
         rangeUpdateInProgress=false;
     }
 }
-for(const scale of scales)scale.subscribeVisibleLogicalRangeChange(range=>syncRange(scale,range));
+for(const scale of scales)scale.subscribeVisibleLogicalRangeChange(range=>{
+    syncRange(scale,range);
+    drawSession();
+});
 document.getElementById('status').textContent=data.symbol+' · '+data.candles.length+' phiên · Vuốt để xem lịch sử · Chụm hai ngón để thu phóng';
 let initialRangeApplied=false;
 const observer=new ResizeObserver(()=>{
