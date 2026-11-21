@@ -298,6 +298,38 @@ def load_saved_market_scan() -> tuple[pd.DataFrame | None, dict | None]:
         raise MarketDataError(f"Không đọc được bản quét tự động ({path.name}): {exc}") from exc
 
 
+def filter_signal_columns(table: pd.DataFrame, key: str) -> pd.DataFrame:
+    """Apply optional filters selected per displayed column."""
+    filters = st.multiselect("Cột cần lọc", list(table.columns), key=f"{key}_columns")
+    matches = pd.Series(True, index=table.index)
+    for column in filters:
+        values = table[column]
+        widget_key = f"{key}_{column}"
+        left, right = st.columns(2)
+        if pd.api.types.is_numeric_dtype(values):
+            lower = left.number_input(f"{column} từ", value=None, key=f"{widget_key}_from")
+            upper = right.number_input(f"{column} đến", value=None, key=f"{widget_key}_to")
+        elif column.startswith("Ngày "):
+            lower = left.date_input(f"{column} từ", value=None, key=f"{widget_key}_from")
+            upper = right.date_input(f"{column} đến", value=None, key=f"{widget_key}_to")
+            values = pd.to_datetime(values, errors="coerce").dt.date
+        elif column in {"Sàn", "Dữ liệu"}:
+            selected = left.multiselect(column, sorted(values.dropna().unique()), key=widget_key)
+            if selected:
+                matches &= values.isin(selected)
+            continue
+        else:
+            query = left.text_input(f"Tìm {column.lower()}", key=widget_key).strip()
+            if query:
+                matches &= values.str.contains(query, case=False, regex=False, na=False)
+            continue
+        if lower is not None:
+            matches &= values.ge(lower)
+        if upper is not None:
+            matches &= values.le(upper)
+    return table.loc[matches]
+
+
 def render_stock_dashboard():
     st.header("📈 STOCKLAB VIỆT NAM")
     st.caption("Bảng giá · Bộ lọc cổ phiếu · Biểu đồ nến · EMA · RSI · MACD · Khối lượng")
@@ -428,34 +460,42 @@ def render_stock_dashboard():
                 signals = pd.DataFrame(signal_rows.values())
                 latest = signals.loc[signals["fresh"].eq(1), "data_date"].max()
                 st.caption(f"Khung D1 · Phiên dữ liệu mới nhất: {latest} · {signals['fresh'].sum():,} mã cập nhật.")
-                active = signals.loc[signals["buy_date"].ne("") & signals["buy_price"].gt(0)].copy()
+                volume_floor = st.number_input("Khối lượng phiên gần nhất phải lớn hơn (cổ phiếu)",
+                                               min_value=50000, value=50000, step=10000,
+                                               key="signals_volume_floor")
+                tracked = signals["buy_date"].ne("") & signals["buy_price"].gt(0)
+                missing_volume = (tracked & signals["last_volume"].isna()).sum()
+                if missing_volume:
+                    st.info(f"{missing_volume:,} mã đang theo dõi chưa có khối lượng để áp dụng bộ lọc.")
+                active = signals.loc[tracked & signals["last_volume"].gt(volume_floor)].copy()
                 active["% lợi nhuận"] = (active["last_close"] / active["buy_price"] - 1) * 100
                 active["Dữ liệu"] = "Cũ"
                 active.loc[active["fresh"].eq(1) & active["data_date"].eq(latest), "Dữ liệu"] = "Mới nhất"
                 active = active.rename(columns={
                     "symbol": "Mã", "exchange": "Sàn", "buy_date": "Ngày báo mua",
                     "buy_price": "Giá báo mua", "last_close": "Giá gần nhất",
-                    "sessions": "Số phiên", "data_date": "Ngày giá gần nhất",
+                    "sessions": "Số phiên", "data_date": "Ngày giá gần nhất", "last_volume": "Khối lượng",
                 })
                 buys = active.loc[active["Ngày báo mua"].eq(latest) & active["Dữ liệu"].eq("Mới nhất")]
                 st.subheader("Tín hiệu mua")
-                if buys.empty:
-                    st.info("Phiên mới nhất chưa có tín hiệu Mua.")
-                else:
-                    st.dataframe(buys[["Mã", "Sàn", "Ngày báo mua", "Giá báo mua"]].sort_values("Mã"),
-                                 hide_index=True, use_container_width=True)
+                buy_columns = ["Mã", "Sàn", "Ngày báo mua", "Giá báo mua", "Khối lượng"]
+                with st.expander("Lọc cột bảng Tín hiệu mua"):
+                    buys = filter_signal_columns(buys[buy_columns], "signals_buy")
+                st.caption(f"{len(buys):,} mã phù hợp")
+                st.dataframe(buys.sort_values("Mã"), hide_index=True, use_container_width=True)
+
                 st.subheader("Đang theo dõi")
                 st.caption("Giá báo mua là giá đóng cửa của phiên có tín hiệu. Số phiên bắt đầu từ 0. % lợi nhuận chưa tính phí.")
-                if active.empty:
-                    st.info("Chưa có mã đang theo dõi.")
-                else:
-                    st.dataframe(
-                        active[["Mã", "Sàn", "Ngày báo mua", "Giá báo mua", "Giá gần nhất",
-                                "% lợi nhuận", "Số phiên", "Ngày giá gần nhất", "Dữ liệu"]]
-                        .sort_values(["Ngày báo mua", "Mã"], ascending=[False, True]),
-                        column_config={"% lợi nhuận": st.column_config.NumberColumn(format="%.2f%%")},
-                        hide_index=True, use_container_width=True,
-                    )
+                tracking_columns = ["Mã", "Sàn", "Ngày báo mua", "Giá báo mua", "Giá gần nhất",
+                                    "Khối lượng", "% lợi nhuận", "Số phiên", "Ngày giá gần nhất", "Dữ liệu"]
+                with st.expander("Lọc cột bảng Đang theo dõi"):
+                    active = filter_signal_columns(active[tracking_columns], "signals_tracking")
+                st.caption(f"{len(active):,} mã phù hợp")
+                st.dataframe(
+                    active.sort_values(["Ngày báo mua", "Mã"], ascending=[False, True]),
+                    column_config={"% lợi nhuận": st.column_config.NumberColumn(format="%.2f%%")},
+                    hide_index=True, use_container_width=True,
+                )
             else:
                 st.info("Hai bảng sẽ có dữ liệu sau lượt quét tín hiệu D1 đầu tiên.")
 

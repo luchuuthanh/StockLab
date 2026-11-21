@@ -195,8 +195,41 @@ jobs:
           print(df120.to_string(index=False))
           print("SAMPLE ERRORS:", errors[:15])
           PY
+      - name: Backfill volume for active signals
+        if: github.event_name == 'push' && contains(github.event.head_commit.message, '[backfill signal volume]')
+        timeout-minutes: 12
+        run: |
+          python - <<'PY'
+          from concurrent.futures import ThreadPoolExecutor
+          import pandas as pd
+          from cophieu68_import import fetch_cophieu68_history
+          from stochastic_signals import load_signal_state, STATE_PATH, STATE_COLUMNS
+
+          records = load_signal_state()
+          active = [row for row in records.values() if row["buy_date"]]
+          def read_volume(row):
+              try:
+                  bars = fetch_cophieu68_history(row["symbol"], max_pages=1)
+                  date_matches = bars["date"].dt.strftime("%Y-%m-%d").eq(row["data_date"])
+                  volumes = bars.loc[date_matches, "volume"].dropna()
+                  if not volumes.empty:
+                      return float(volumes.iloc[-1])
+              except (ValueError, OSError):
+                  pass
+              return None
+
+          with ThreadPoolExecutor(max_workers=12) as pool:
+              for row, volume in zip(active, pool.map(read_volume, active)):
+                  if volume is not None:
+                      row["last_volume"] = volume
+          covered = sum(pd.notna(row["last_volume"]) for row in active)
+          if active and not covered:
+              raise RuntimeError("Không lấy được khối lượng của các mã đang theo dõi")
+          pd.DataFrame(records.values(), columns=STATE_COLUMNS).sort_values("symbol").to_csv(STATE_PATH, index=False)
+          print(f"SIGNAL VOLUME COVERAGE: {covered}/{len(active)} active codes")
+          PY
       - name: Publish latest market scan for StockLab
-        if: success() && (github.event_name != 'push' || contains(github.event.head_commit.message, '[scan signals]'))
+        if: success() && (github.event_name != 'push' || contains(github.event.head_commit.message, '[scan signals]') || contains(github.event.head_commit.message, '[backfill signal volume]'))
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

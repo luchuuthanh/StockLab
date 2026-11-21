@@ -8,14 +8,16 @@ from lightweight_chart import calculate_stochastic_trial, stochastic_trade_event
 STATE_PATH = Path(__file__).with_name("stocklab_trade_signals.csv")
 STATE_COLUMNS = [
     "symbol", "exchange", "data_date", "last_close", "buy_date",
-    "buy_price", "sessions", "ready", "fresh",
+    "buy_price", "sessions", "ready", "fresh", "last_volume",
 ]
 
 
 def load_signal_state():
     if not STATE_PATH.exists():
         return {}
-    rows = pd.read_csv(STATE_PATH, keep_default_na=False).to_dict("records")
+    frame = pd.read_csv(STATE_PATH, keep_default_na=False)
+    frame["last_volume"] = pd.to_numeric(frame.get("last_volume"), errors="coerce")
+    rows = frame.to_dict("records")
     return {row["symbol"]: row for row in rows}
 
 
@@ -49,5 +51,5 @@ def update_signal_state(symbol, exchange, bars, previous):
         "symbol": symbol, "exchange": exchange, "data_date": dates[-1],
         "last_close": float(bars.iloc[-1]["close"]), "buy_date": entry_date,
         "buy_price": entry_price, "sessions": sessions, "ready": int(ready),
-        "fresh": 1,
+        "fresh": 1, "last_volume": float(bars.iloc[-1]["volume"]),
     }
