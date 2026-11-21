@@ -176,7 +176,8 @@ function chartSizes(){
 }
 const base={crosshair:{vertLine:{visible:false,labelVisible:false},horzLine:{visible:true,labelVisible:true}},layout:{background:{type:'solid',color:'#101722'},textColor:'#c8d2df'},grid:{vertLines:{color:'#1b2736'},horzLines:{color:'#1b2736'}},rightPriceScale:{borderColor:'#35465a',minimumWidth:baseAxisWidth},timeScale:{borderColor:'#35465a',timeVisible:false},handleScroll:{mouseWheel:true,pressedMouseMove:true,horzTouchDrag:true,vertTouchDrag:false},handleScale:{mouseWheel:true,pinch:true,axisPressedMouseMove:true}};
 const price=L.createChart(document.getElementById('price'),{...base,width:Math.max(320,document.getElementById('price').clientWidth),height:chartSizes().price});
-const candle=price.addCandlestickSeries({upColor:'#26a69a',downColor:'#ef5350',wickUpColor:'#26a69a',wickDownColor:'#ef5350',borderVisible:false});
+const candleStyle={upColor:'#26a69a',downColor:'#ef5350',wickUpColor:'#26a69a',wickDownColor:'#ef5350',borderVisible:false};
+const candle=price.addCandlestickSeries(candleStyle);
 candle.setData(data.candles);
 const colors={EMA7:'#f8d05a',SMA20:'#37c3ff',EMA20:'#b48bff',EMA50:'#f59e73',EMA100:'#e5e7eb'};
 const overlay={};
@@ -198,6 +199,20 @@ const volumeAverage=vol.addLineSeries({color:'#f8d05a',lineWidth:2,priceFormat:{
     priceLineVisible:false,lastValueVisible:false});
 volumeAverage.setData(data.volumeSma10);
 const stochasticMode='Bộ chỉ báo mua bán';
+const heikinAshiMode='Nến Heikin Ashi';
+const tallIndicatorModes=new Set([stochasticMode,heikinAshiMode]);
+function calculateHeikinAshi(candles){
+    let previous;
+    return candles.map(bar=>{
+        const close=(bar.open+bar.high+bar.low+bar.close)/4;
+        const open=previous?(previous.open+previous.close)/2:(bar.open+bar.close)/2;
+        const high=Math.max(bar.high,open,close);
+        const low=Math.min(bar.low,open,close);
+        previous={time:bar.time,open,high,low,close};
+        return previous;
+    });
+}
+const heikinAshiBars=calculateHeikinAshi(data.candles);
 const candleFocus=document.getElementById('candle-focus');
 function createIndicatorPane(id, sectionId, titleId){
     const root=document.getElementById(id);
@@ -229,8 +244,11 @@ function createIndicatorPane(id, sectionId, titleId){
     });
     const mom=osc.addLineSeries({color:'#69c6f0',lineWidth:2,priceLineVisible:false,visible:false});
     mom.setData(data.mom);
+    const heikinAshi=osc.addCandlestickSeries({...candleStyle,priceLineVisible:false,visible:false});
+    heikinAshi.setData(heikinAshiBars);
     const modes={RSI:[rsi,rsi30,rsi70],MACD:[macd,signal,hist],MOM:[mom],
-        [stochasticMode]:[stochasticBars,...stochasticLines.map(([,series])=>series)]};
+        [stochasticMode]:[stochasticBars,...stochasticLines.map(([,series])=>series)],
+        [heikinAshiMode]:[heikinAshi]};
     const candleFocusSeries=new Set([stochasticBars,...stochasticLines
         .filter(([name])=>name==='Biên trên'||name==='Biên dưới').map(([,series])=>series)]);
     const display={RSI:[['RSI',rsi]],MACD:[['MACD',macd],['Signal',signal],['Histogram',hist]],
@@ -252,16 +270,16 @@ function resizeChartPanes(){
     };
     resize(document.getElementById('price'),price,priceHeight,!compactScreen.matches);
     resize(document.getElementById('volume'),vol,volumeHeight,false);
-    const expandSignal=lastIndicator===1&&selectedModes.includes(stochasticMode);
-    const extraHeight=expandSignal&&chartFrame?indicator:0;
+    const tallCount=lastIndicator===1?selectedModes.filter(mode=>tallIndicatorModes.has(mode)).length:0;
+    const extraHeight=chartFrame?indicator*tallCount:0;
     if(extraHeight!==signalExtraHeight){
         signalExtraHeight=extraHeight;
         chartFrame.style.setProperty('--stocklab-signal-extra', extraHeight+'px');
     }
-    const indicatorHeight=expandSignal&&!chartFrame?Math.floor(indicator*2/3):indicator;
+    const indicatorHeight=chartFrame?indicator:Math.floor(indicator*2/(2+tallCount));
     indicatorPanes.slice(0,selectedModes.length).forEach((pane,i)=>{
         const height=lastIndicator===0?indicator*2+header:
-            indicatorHeight*(selectedModes[i]===stochasticMode?2:1);
+            indicatorHeight*(tallIndicatorModes.has(selectedModes[i])?2:1);
         resize(pane.root,pane.chart,height,!compactScreen.matches||i===lastIndicator);
     });
 }
@@ -358,6 +376,7 @@ for(const [,chart] of panes){
 const scales=panes.map(([,chart])=>chart.timeScale());
 const indexByDate=points=>new Map(points.map(point=>[point.time,point]));
 const pricesByDate=indexByDate(data.candles);
+const heikinAshiByDate=indexByDate(heikinAshiBars);
 const volumeByDate=indexByDate(data.volume);
 const volumeAverageByDate=indexByDate(data.volumeSma10);
 const valueSeries=Object.fromEntries(Object.entries({
@@ -385,6 +404,9 @@ function visibleValues(series,digits){
         return point&&seriesApi.options().visible?[name+' '+point.value.toFixed(digits)]:[];
     });
 }
+function candleValues(bar){
+    return ['open','high','low','close'].map(key=>key[0].toUpperCase()+' '+bar[key].toFixed(2));
+}
 function drawSession(){
     if(!selectedDate)return;
     const bar=pricesByDate.get(selectedDate);
@@ -392,11 +414,13 @@ function drawSession(){
     const average=volumeAverageByDate.get(selectedDate);
     const day=selectedDate.split('-').reverse().join('/');
     const notes=[
-        [day,...['open','high','low','close'].map(key=>key[0].toUpperCase()+' '+bar[key].toFixed(2)),
+        [day,...candleValues(bar),
             ...visibleValues(displayPrice,2)].join(' · '),
         [volPoint?'Khối lượng '+qty.format(volPoint.value):'Khối lượng —',
             average?'SMA10 '+qty.format(average.value):'SMA10 —'].join(' · '),
-        ...selectedModes.map((mode,i)=>[
+        ...selectedModes.map((mode,i)=>mode===heikinAshiMode
+            ? [day,...candleValues(heikinAshiByDate.get(selectedDate))].join(' · ')
+            : [
             day,...(mode===stochasticMode&&candleFocus.getAttribute('aria-pressed')==='true'&&valueSeries['EMA 3'].has(selectedDate)
                 ? ['Nến '+valueSeries['EMA 3'].get(selectedDate).value.toFixed(2)] : []),
             ...visibleValues(indicatorPanes[i].display[mode],mode==='MACD'?3:2)
