@@ -309,11 +309,7 @@ def render_stock_dashboard():
         days = st.selectbox("Số ngày lịch sử", [260, 365, 520, 730], index=1)
     with right:
         min_volume = st.number_input("Khối lượng tối thiểu (cổ phiếu)", min_value=0, value=50000, step=10000)
-    filter_col1, filter_col2 = st.columns(2)
-    with filter_col1:
-        mom_floor = st.number_input("ROC14 tối thiểu (%)", value=4.0, step=0.5)
-    with filter_col2:
-        mom10_floor = st.number_input("MOM10 tối thiểu (giá)", value=4.0, step=0.5)
+    mom10_floor = st.number_input("MOM10 tối thiểu (giá)", value=4.0, step=0.5)
     require_ema = st.checkbox("Chỉ lấy giá đóng cửa ≥ EMA100", value=True)
     st.caption("Dữ liệu thị trường được cập nhật tự động từ Cophieu68. Nút bên dưới chỉ nạp lại bản quét đầy đủ, không gọi Vnstock hàng loạt.")
 
@@ -379,7 +375,6 @@ def render_stock_dashboard():
         )
 
     result = result.copy()
-    result["Đạt ROC14"] = result["ROC14 (%)"] >= mom_floor
     result["Đạt MOM10"] = result["MOM10 (FireAnt)"] >= mom10_floor
     result["Đạt EMA100"] = result["Giá đóng cửa"] >= result["EMA100"]
     result["Đạt khối lượng"] = result["KLGD TB20"] >= min_volume
@@ -388,9 +383,6 @@ def render_stock_dashboard():
     if require_ema:
         common_pass = common_pass & result["Đạt EMA100"]
     result["Đạt MOM10 filter"] = result["Đạt MOM10"] & common_pass
-    result["Đạt ROC14 filter"] = result["Đạt ROC14"] & common_pass
-    filtered_mom10 = result[result["Đạt MOM10 filter"]].copy().sort_values("MOM10 (FireAnt)", ascending=False).reset_index(drop=True)
-    filtered_roc14 = result[result["Đạt ROC14 filter"]].copy().sort_values("ROC14 (%)", ascending=False).reset_index(drop=True)
     filtered = result[common_pass].copy()
 
     if stats:
@@ -410,18 +402,23 @@ def render_stock_dashboard():
     tab_scan, tab_chart, tab_compare, tab_all = st.tabs(["🔎 Bộ lọc cổ phiếu", "📊 Biểu đồ kỹ thuật", "🕯️ So sánh 2 CP", "📋 Toàn bộ thị trường"])
     with tab_scan:
         mom_tab, roc_tab = st.tabs(["MOM10 ≥ ngưỡng", "ROC14 ≥ ngưỡng"])
+        with roc_tab:
+            st.subheader("Danh sách ROC14 độc lập · phần trăm thay đổi 14 phiên")
+            st.caption("Không yêu cầu MOM10 đạt ngưỡng. Vẫn áp dụng khối lượng tối thiểu và EMA100 nếu bật.")
+            roc_floor = st.number_input("ROC14 tối thiểu (%)", value=4.0, step=0.5)
+            result["Đạt ROC14"] = result["ROC14 (%)"] >= roc_floor
+            result["Đạt ROC14 filter"] = result["Đạt ROC14"] & common_pass
+            filtered_roc14 = result[result["Đạt ROC14 filter"]].copy().sort_values("ROC14 (%)", ascending=False).reset_index(drop=True)
+            st.metric("Số mã đạt ROC14", f"{len(filtered_roc14):,}")
+            st.dataframe(filtered_roc14[["Mã", "Sàn", "Giá đóng cửa", "MOM10 (FireAnt)", "ROC14 (%)", "EMA100", "Khối lượng", "KLGD TB20", "Ngày dữ liệu"]], use_container_width=True, hide_index=True)
+            st.download_button("Tải CSV ROC14", filtered_roc14.to_csv(index=False).encode("utf-8-sig"), "co_phieu_ROC14_dat_nguong.csv", "text/csv")
+        filtered_mom10 = result[result["Đạt MOM10 filter"]].copy().sort_values("MOM10 (FireAnt)", ascending=False).reset_index(drop=True)
         with mom_tab:
             st.subheader("Danh sách MOM10 độc lập · FireAnt Length 10, Close")
             st.caption("Không yêu cầu ROC14 đạt ngưỡng. Vẫn áp dụng khối lượng tối thiểu và EMA100 nếu bật.")
             st.metric("Số mã đạt MOM10", f"{len(filtered_mom10):,}")
             st.dataframe(filtered_mom10[["Mã", "Sàn", "Giá đóng cửa", "MOM10 (FireAnt)", "ROC14 (%)", "EMA100", "Khối lượng", "KLGD TB20", "Ngày dữ liệu"]], use_container_width=True, hide_index=True)
             st.download_button("Tải CSV MOM10", filtered_mom10.to_csv(index=False).encode("utf-8-sig"), "co_phieu_MOM10_dat_nguong.csv", "text/csv")
-        with roc_tab:
-            st.subheader("Danh sách ROC14 độc lập · phần trăm thay đổi 14 phiên")
-            st.caption("Không yêu cầu MOM10 đạt ngưỡng. Vẫn áp dụng khối lượng tối thiểu và EMA100 nếu bật.")
-            st.metric("Số mã đạt ROC14", f"{len(filtered_roc14):,}")
-            st.dataframe(filtered_roc14[["Mã", "Sàn", "Giá đóng cửa", "MOM10 (FireAnt)", "ROC14 (%)", "EMA100", "Khối lượng", "KLGD TB20", "Ngày dữ liệu"]], use_container_width=True, hide_index=True)
-            st.download_button("Tải CSV ROC14", filtered_roc14.to_csv(index=False).encode("utf-8-sig"), "co_phieu_ROC14_dat_nguong.csv", "text/csv")
 
     available_symbols = sorted({
         str(symbol).strip().upper()
