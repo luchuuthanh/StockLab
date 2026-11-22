@@ -234,6 +234,8 @@ function isRejectedGreenHeikinAshi(bar){
     const range=bar.high-bar.low;
     const tolerance=4*Number.EPSILON*Math.max(Math.abs(bar.high),Math.abs(bar.low));
     if(body<=0.10*range+tolerance)return true;
+    const longBody=body+tolerance>=0.01*bar.open&&body+tolerance>=0.50*range;
+    if(longBody)return false;
     const upperWick=bar.high-bar.close;
     const lowerWick=bar.open-bar.low;
     return Math.max(upperWick,lowerWick)>0.35*body+tolerance;
