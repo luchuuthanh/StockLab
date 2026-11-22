@@ -459,7 +459,7 @@ def render_stock_dashboard():
             if signal_rows:
                 signals = pd.DataFrame(signal_rows.values())
                 latest = signals.loc[signals["fresh"].eq(1), "data_date"].max()
-                st.caption(f"Khung D1 · Phiên dữ liệu mới nhất: {latest} · {signals['fresh'].sum():,} mã cập nhật.")
+                st.caption(f"Bộ tín hiệu mua bán 4 · Khung D1 · Phiên dữ liệu mới nhất: {latest} · {signals['fresh'].sum():,} mã cập nhật.")
                 volume_floor = st.number_input("Khối lượng phiên gần nhất từ (cổ phiếu)",
                                                min_value=100000, value=100000, step=10000,
                                                key="signals_volume_floor_100k")
@@ -473,12 +473,13 @@ def render_stock_dashboard():
                 active.loc[active["fresh"].eq(1) & active["data_date"].eq(latest), "Dữ liệu"] = "Mới nhất"
                 active = active.rename(columns={
                     "symbol": "Mã", "exchange": "Sàn", "buy_date": "Ngày báo mua",
+                    "buy_type": "Tín hiệu",
                     "buy_price": "Giá báo mua", "last_close": "Giá gần nhất",
                     "sessions": "Số phiên", "data_date": "Ngày giá gần nhất", "last_volume": "Khối lượng",
                 })
                 buys = active.loc[active["Ngày báo mua"].eq(latest) & active["Dữ liệu"].eq("Mới nhất")]
                 st.subheader("Tín hiệu mua")
-                buy_columns = ["Mã", "Sàn", "Ngày báo mua", "Giá báo mua", "Khối lượng"]
+                buy_columns = ["Mã", "Sàn", "Tín hiệu", "Ngày báo mua", "Giá báo mua", "Khối lượng"]
                 with st.expander("Lọc cột bảng Tín hiệu mua"):
                     buys = filter_signal_columns(buys[buy_columns], "signals_buy")
                 st.caption(f"{len(buys):,} mã phù hợp")
@@ -497,7 +498,7 @@ def render_stock_dashboard():
                     hide_index=True, use_container_width=True,
                 )
             else:
-                st.info("Hai bảng sẽ có dữ liệu sau lượt quét tín hiệu D1 đầu tiên.")
+                st.info("Hai bảng sẽ có dữ liệu sau lượt quét D1 đầu tiên của Bộ tín hiệu mua bán 4.")
 
     available_symbols = sorted({
         str(symbol).strip().upper()

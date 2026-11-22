@@ -58,20 +58,87 @@ def stochastic_trade_events(stochastic, dates, *, after="", holding=False, ready
     return markers, ready_to_buy
 
 
-def render_lightweight_chart(chart: pd.DataFrame, symbol: str, timeframe: str = "1D") -> None:
-    """Render interactive candles with touch navigation, volume and selectable overlays."""
-    # Standard Ichimoku (9, 26, 52), with 26-period projection.
-    ordered = chart.sort_values("date").drop_duplicates("date", keep="last").copy()
-    hi9 = ordered["high"].rolling(9, min_periods=9).max()
-    lo9 = ordered["low"].rolling(9, min_periods=9).min()
-    hi26 = ordered["high"].rolling(26, min_periods=26).max()
-    lo26 = ordered["low"].rolling(26, min_periods=26).min()
-    hi52 = ordered["high"].rolling(52, min_periods=52).max()
-    lo52 = ordered["low"].rolling(52, min_periods=52).min()
+def ichimoku_spans(bars):
+    hi9 = bars["high"].rolling(9, min_periods=9).max()
+    lo9 = bars["low"].rolling(9, min_periods=9).min()
+    hi26 = bars["high"].rolling(26, min_periods=26).max()
+    lo26 = bars["low"].rolling(26, min_periods=26).min()
+    hi52 = bars["high"].rolling(52, min_periods=52).max()
+    lo52 = bars["low"].rolling(52, min_periods=52).min()
     tenkan = (hi9 + lo9) / 2
     kijun = (hi26 + lo26) / 2
     span_a = (tenkan + kijun) / 2
     span_b = (hi52 + lo52) / 2
+    return tenkan, kijun, span_a, span_b
+
+
+def rejected_heikin_ashi_dates(bars, buy_dates):
+    """Apply the same green-body and wick rules as the chart."""
+    previous = None
+    rejected = set()
+    for bar in bars.itertuples(index=False):
+        close = (bar.open + bar.high + bar.low + bar.close) / 4
+        opening = sum(previous) / 2 if previous else (bar.open + bar.close) / 2
+        previous = opening, close
+        if bar.date.strftime("%Y-%m-%d") not in buy_dates or close <= opening:
+            continue
+        high, low = max(bar.high, opening, close), min(bar.low, opening, close)
+        body, spread = close - opening, high - low
+        tolerance = 4 * 2**-52 * max(abs(high), abs(low))
+        long_body = body + tolerance >= 0.01 * opening and body + tolerance >= 0.50 * spread
+        if body <= 0.10 * spread + tolerance or (
+            not long_body and max(high - close, opening - low) > 0.35 * body + tolerance
+        ):
+            rejected.add(bar.date.strftime("%Y-%m-%d"))
+    return rejected
+
+
+def signal_set_four_events(bars, stochastic, *, after="", trade="", ready=False, spans=None):
+    """Return Set 4 markers plus the oscillator and breakout state for the next scan."""
+    raw_events, ready = stochastic_trade_events(
+        stochastic, bars["date"], after=after, holding=bool(trade),
+        ready_to_buy=ready, buy_threshold=32,
+    )
+    by_date = {event["time"]: event for event in raw_events}
+    rejected = rejected_heikin_ashi_dates(
+        bars, {day for day, event in by_date.items() if event["text"] == "Mua"},
+    )
+    _, _, span_a, span_b = ichimoku_spans(bars) if spans is None else spans
+    events = []
+    for date, price, a, b in zip(
+        bars["date"], bars["close"], span_a.shift(26).round(6), span_b.shift(26).round(6),
+    ):
+        day = date.strftime("%Y-%m-%d")
+        if day <= after:
+            continue
+        event = by_date.get(day)
+        has_cloud = pd.notna(a) and pd.notna(b)
+        if trade == "pending":
+            trade = "fake"
+            if event is None and has_cloud and price > max(a, b):
+                trade = "vm"
+                events.append({"time": day, "position": "belowBar", "color": "#32d981",
+                               "shape": "arrowUp", "text": "Mua VM", "price": float(price)})
+        if event is None:
+            continue
+        if event["text"] == "Mua":
+            if has_cloud and min(a, b) <= price <= max(a, b):
+                trade = "pending"
+            else:
+                trade = "fake" if day in rejected else "normal"
+            text = "Mua" if trade == "normal" else "Mua giả"
+        else:
+            text = {"vm": "Bán VM", "fake": "Bán giả"}.get(trade, "Bán")
+            trade = ""
+        events.append({**event, "text": text, "price": float(price)})
+    return events, ready, trade
+
+
+def render_lightweight_chart(chart: pd.DataFrame, symbol: str, timeframe: str = "1D") -> None:
+    """Render interactive candles with touch navigation, volume and selectable overlays."""
+    # Standard Ichimoku (9, 26, 52), with 26-period projection.
+    ordered = chart.sort_values("date").drop_duplicates("date", keep="last").copy()
+    tenkan, kijun, span_a, span_b = ichimoku_spans(ordered)
     dates = list(ordered["date"])
     projection_step = {
         "1D": pd.offsets.BusinessDay(),
@@ -127,6 +194,9 @@ def render_lightweight_chart(chart: pd.DataFrame, symbol: str, timeframe: str = 
                           "timeline": [day.strftime("%Y-%m-%d") for day in projected_dates],
                           "stochastic": {name: ichipoints(values) for name, values in stochastic.items()},
                           "stochasticBars": stochastic_bars,
+                          "stochasticMarkers4": signal_set_four_events(
+                              chart, stochastic, spans=(tenkan, kijun, span_a, span_b),
+                          )[0],
                           "stochasticMarkers32": stochastic_trade_markers(stochastic, dates, buy_threshold=32),
                           "stochasticMarkers": stochastic_trade_markers(stochastic, dates)}, ensure_ascii=True).replace("</", "<\\/")
     html = """<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
@@ -253,51 +323,14 @@ function classifyStochasticMarkers(markers,barsByDate){
         return classified;
     });
 }
-function classifyCloudBreakoutMarkers(markers,candles,ichimoku){
-    const spanA=indexByDate(ichimoku.SenkouA);
-    const spanB=indexByDate(ichimoku.SenkouB);
-    const barIndex=new Map(candles.map((bar,i)=>[bar.time,i]));
-    const priceFormat=new Intl.NumberFormat('vi-VN',{minimumFractionDigits:2,maximumFractionDigits:2});
-    const classified=[];
-    let cloudTrade=null;
-    for(const [i,marker] of markers.entries()){
-        const index=barIndex.get(marker.time);
-        const bar=candles[index];
-        if(marker.shape==='arrowDown'){
-            if(cloudTrade==='vm'){
-                classified.push({...marker,text:'Bán VM · '+priceFormat.format(bar.close)});
-            }else{
-                classified.push(cloudTrade==='fake'?{...marker,text:'Bán giả'}:marker);
-            }
-            cloudTrade=null;
-            continue;
-        }
-        const a=spanA.get(marker.time)?.value;
-        const b=spanB.get(marker.time)?.value;
-        const inside=bar&&Number.isFinite(bar.close)&&Number.isFinite(a)&&Number.isFinite(b)
-            &&bar.close>=Math.min(a,b)&&bar.close<=Math.max(a,b);
-        if(!inside){
-            classified.push(marker);
-            continue;
-        }
-        classified.push({...marker,text:'Mua giả'});
-        cloudTrade='fake';
-        const next=candles[index+1];
-        if(!next||(markers[i+1]&&markers[i+1].time<=next.time))continue;
-        const nextTop=Math.max(spanA.get(next.time)?.value,spanB.get(next.time)?.value);
-        if(Number.isFinite(next.close)&&next.close>nextTop){
-            classified.push({...marker,time:next.time,text:'Mua VM · '+priceFormat.format(next.close)});
-            cloudTrade='vm';
-        }
-    }
-    return classified;
-}
 const thirdStochasticMarkers=classifyStochasticMarkers(data.stochasticMarkers32,heikinAshiByDate);
+const vmPriceFormat=new Intl.NumberFormat('vi-VN',{minimumFractionDigits:2,maximumFractionDigits:2});
 const signalMarkers=new Map([
     [stochasticMode,data.stochasticMarkers],
     [filteredStochasticMode,classifyStochasticMarkers(data.stochasticMarkers,heikinAshiByDate)],
     [thirdStochasticMode,thirdStochasticMarkers],
-    [fourthStochasticMode,classifyCloudBreakoutMarkers(thirdStochasticMarkers,data.candles,data.ichimoku)]
+    [fourthStochasticMode,data.stochasticMarkers4.map(({price,...marker})=>
+        marker.text.endsWith(' VM')?{...marker,text:marker.text+' · '+vmPriceFormat.format(price)}:marker)]
 ]);
 const candleFocus=document.getElementById('candle-focus');
 function createIndicatorPane(id, sectionId, titleId){
