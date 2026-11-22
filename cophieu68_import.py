@@ -109,7 +109,7 @@ def fetch_cophieu68_history(
     session = requests.Session()
     session.headers.update({"User-Agent": "Mozilla/5.0", "Referer": "https://cophieu68.vn/"})
     for page in range(1, max_pages + 1):
-        params = {"id": symbol, "cP": 1}
+        params = {"id": symbol.lower()}
         if page > 1:
             params["cP"] = page
         response = session.get("https://cophieu68.vn/quote/history.php", params=params, timeout=25)
@@ -134,8 +134,13 @@ def fetch_cophieu68_history(
                 continue
             def numeric(series):
                 return pd.to_numeric(series.astype(str).str.replace(",", "", regex=False).str.replace(" ", "", regex=False), errors="coerce")
-            parsed_date = pd.to_datetime(date_s, errors="coerce", dayfirst=True)
-            if parsed_date.notna().sum() < 5:
+            # The public history page prints Vietnamese trading dates as DD/MM/YYYY.
+            # Reject other date-like table cells instead of guessing their order.
+            parsed_date = pd.to_datetime(
+                date_s.astype(str).str.strip(), format="%d/%m/%Y", errors="coerce"
+            )
+            trading_dates = parsed_date.dropna()
+            if trading_dates.empty or not trading_dates.is_monotonic_decreasing:
                 continue
             part = pd.DataFrame({
                 "symbol": symbol,
