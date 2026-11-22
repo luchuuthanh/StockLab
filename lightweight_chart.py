@@ -24,13 +24,13 @@ def calculate_stochastic_trial(chart: pd.DataFrame) -> pd.DataFrame:
     })
 
 
-def stochastic_trade_markers(stochastic: pd.DataFrame, dates) -> list[dict[str, str]]:
+def stochastic_trade_markers(stochastic: pd.DataFrame, dates, *, buy_threshold=25) -> list[dict[str, str]]:
     """Mark crossings of the oscillator candle close and the red EMA 9 line."""
-    markers, _ = stochastic_trade_events(stochastic, dates)
+    markers, _ = stochastic_trade_events(stochastic, dates, buy_threshold=buy_threshold)
     return markers
 
 
-def stochastic_trade_events(stochastic, dates, *, after="", holding=False, ready_to_buy=False):
+def stochastic_trade_events(stochastic, dates, *, after="", holding=False, ready_to_buy=False, buy_threshold=25):
     """Replay the chart's signal rules, optionally resuming a previous scan."""
     closes = stochastic["EMA 3"]
     red = stochastic["EMA 9"]
@@ -41,7 +41,7 @@ def stochastic_trade_events(stochastic, dates, *, after="", holding=False, ready
         signal_date = day.strftime("%Y-%m-%d")
         if signal_date <= after or pd.isna(current) or pd.isna(current_red):
             continue
-        if not holding and current < 25:
+        if not holding and current < buy_threshold:
             ready_to_buy = True
         if pd.isna(previous) or pd.isna(previous_red):
             continue
@@ -49,7 +49,7 @@ def stochastic_trade_events(stochastic, dates, *, after="", holding=False, ready
             markers.append({"time": signal_date, "position": "aboveBar",
                             "color": "#ff6068", "shape": "arrowDown", "text": "Bán"})
             holding = False
-            ready_to_buy = current < 25
+            ready_to_buy = current < buy_threshold
         elif not holding and ready_to_buy and previous <= previous_red and current > current_red and current > previous:
             markers.append({"time": signal_date, "position": "belowBar",
                             "color": "#32d981", "shape": "arrowUp", "text": "Mua"})
@@ -127,6 +127,7 @@ def render_lightweight_chart(chart: pd.DataFrame, symbol: str, timeframe: str = 
                           "timeline": [day.strftime("%Y-%m-%d") for day in projected_dates],
                           "stochastic": {name: ichipoints(values) for name, values in stochastic.items()},
                           "stochasticBars": stochastic_bars,
+                          "stochasticMarkers32": stochastic_trade_markers(stochastic, dates, buy_threshold=32),
                           "stochasticMarkers": stochastic_trade_markers(stochastic, dates)}, ensure_ascii=True).replace("</", "<\\/")
     html = """<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
 <style>html,body{margin:0;background:#101722;color:#e4eaf2;font:13px system-ui,sans-serif}
@@ -213,7 +214,8 @@ volumeAverage.setData(data.volumeSma10);
 const stochasticMode='Bộ chỉ báo mua bán';
 const filteredStochasticMode='Bộ tín hiệu mua bán 2';
 const heikinAshiMode='Nến Heikin Ashi';
-const tallIndicatorModes=new Set([stochasticMode,filteredStochasticMode,heikinAshiMode]);
+const thirdStochasticMode='Bộ tín hiệu mua bán 3';
+const tallIndicatorModes=new Set([stochasticMode,filteredStochasticMode,thirdStochasticMode,heikinAshiMode]);
 function calculateHeikinAshi(candles){
     let previous;
     return candles.map(bar=>{
@@ -252,7 +254,8 @@ function classifyStochasticMarkers(markers,barsByDate){
 }
 const signalMarkers=new Map([
     [stochasticMode,data.stochasticMarkers],
-    [filteredStochasticMode,classifyStochasticMarkers(data.stochasticMarkers,heikinAshiByDate)]
+    [filteredStochasticMode,classifyStochasticMarkers(data.stochasticMarkers,heikinAshiByDate)],
+    [thirdStochasticMode,classifyStochasticMarkers(data.stochasticMarkers32,heikinAshiByDate)]
 ]);
 const candleFocus=document.getElementById('candle-focus');
 function createIndicatorPane(id, sectionId, titleId){
@@ -430,7 +433,7 @@ for(const name of Object.keys(priceOverlays)){
     toolbar.appendChild(button);
 }
 const indicatorNames=Object.keys(indicatorPanes[0].modes).flatMap(name=>
-    name===stochasticMode?[name,filteredStochasticMode]:[name]);
+    name===stochasticMode?[name,filteredStochasticMode,thirdStochasticMode]:[name]);
 for(const name of indicatorNames){
     const button=document.createElement('button');
     button.type='button';
