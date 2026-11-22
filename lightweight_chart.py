@@ -228,19 +228,21 @@ function calculateHeikinAshi(candles){
 const heikinAshiBars=calculateHeikinAshi(data.candles);
 const indexByDate=points=>new Map(points.map(point=>[point.time,point]));
 const heikinAshiByDate=indexByDate(heikinAshiBars);
-function passesHeikinAshiWickFilter(bar){
+function isRejectedGreenHeikinAshi(bar){
     if(!bar||bar.close<=bar.open)return false;
     const body=bar.close-bar.open;
+    const range=bar.high-bar.low;
+    const tolerance=4*Number.EPSILON*Math.max(Math.abs(bar.high),Math.abs(bar.low));
+    if(body<=0.10*range+tolerance)return true;
     const upperWick=bar.high-bar.close;
     const lowerWick=bar.open-bar.low;
-    const tolerance=4*Number.EPSILON*Math.max(Math.abs(bar.high),Math.abs(bar.low));
-    return Math.max(upperWick,lowerWick)<=0.35*body+tolerance;
+    return Math.max(upperWick,lowerWick)>0.35*body+tolerance;
 }
 function classifyStochasticMarkers(markers,barsByDate){
     let fakeBuy=false;
     return markers.map(marker=>{
         const isBuy=marker.shape==='arrowUp';
-        if(isBuy)fakeBuy=!passesHeikinAshiWickFilter(barsByDate.get(marker.time));
+        if(isBuy)fakeBuy=isRejectedGreenHeikinAshi(barsByDate.get(marker.time));
         const classified=fakeBuy?{...marker,text:isBuy?'Mua giả':'Bán giả'}:marker;
         if(!isBuy)fakeBuy=false;
         return classified;
