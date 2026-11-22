@@ -215,7 +215,8 @@ const stochasticMode='Bộ chỉ báo mua bán';
 const filteredStochasticMode='Bộ tín hiệu mua bán 2';
 const heikinAshiMode='Nến Heikin Ashi';
 const thirdStochasticMode='Bộ tín hiệu mua bán 3';
-const tallIndicatorModes=new Set([stochasticMode,filteredStochasticMode,thirdStochasticMode,heikinAshiMode]);
+const fourthStochasticMode='Bộ tín hiệu mua bán 4';
+const tallIndicatorModes=new Set([stochasticMode,filteredStochasticMode,thirdStochasticMode,fourthStochasticMode,heikinAshiMode]);
 function calculateHeikinAshi(candles){
     let previous;
     return candles.map(bar=>{
@@ -252,10 +253,51 @@ function classifyStochasticMarkers(markers,barsByDate){
         return classified;
     });
 }
+function classifyCloudBreakoutMarkers(markers,candles,ichimoku){
+    const spanA=indexByDate(ichimoku.SenkouA);
+    const spanB=indexByDate(ichimoku.SenkouB);
+    const barIndex=new Map(candles.map((bar,i)=>[bar.time,i]));
+    const priceFormat=new Intl.NumberFormat('vi-VN',{minimumFractionDigits:2,maximumFractionDigits:2});
+    const classified=[];
+    let cloudTrade=null;
+    for(const [i,marker] of markers.entries()){
+        const index=barIndex.get(marker.time);
+        const bar=candles[index];
+        if(marker.shape==='arrowDown'){
+            if(cloudTrade==='vm'){
+                classified.push({...marker,text:'Bán VM · '+priceFormat.format(bar.close)});
+            }else{
+                classified.push(cloudTrade==='fake'?{...marker,text:'Bán giả'}:marker);
+            }
+            cloudTrade=null;
+            continue;
+        }
+        const a=spanA.get(marker.time)?.value;
+        const b=spanB.get(marker.time)?.value;
+        const inside=bar&&Number.isFinite(bar.close)&&Number.isFinite(a)&&Number.isFinite(b)
+            &&bar.close>=Math.min(a,b)&&bar.close<=Math.max(a,b);
+        if(!inside){
+            classified.push(marker);
+            continue;
+        }
+        classified.push({...marker,text:'Mua giả'});
+        cloudTrade='fake';
+        const next=candles[index+1];
+        if(!next||(markers[i+1]&&markers[i+1].time<=next.time))continue;
+        const nextTop=Math.max(spanA.get(next.time)?.value,spanB.get(next.time)?.value);
+        if(Number.isFinite(next.close)&&next.close>nextTop){
+            classified.push({...marker,time:next.time,text:'Mua VM · '+priceFormat.format(next.close)});
+            cloudTrade='vm';
+        }
+    }
+    return classified;
+}
+const thirdStochasticMarkers=classifyStochasticMarkers(data.stochasticMarkers32,heikinAshiByDate);
 const signalMarkers=new Map([
     [stochasticMode,data.stochasticMarkers],
     [filteredStochasticMode,classifyStochasticMarkers(data.stochasticMarkers,heikinAshiByDate)],
-    [thirdStochasticMode,classifyStochasticMarkers(data.stochasticMarkers32,heikinAshiByDate)]
+    [thirdStochasticMode,thirdStochasticMarkers],
+    [fourthStochasticMode,classifyCloudBreakoutMarkers(thirdStochasticMarkers,data.candles,data.ichimoku)]
 ]);
 const candleFocus=document.getElementById('candle-focus');
 function createIndicatorPane(id, sectionId, titleId){
@@ -433,7 +475,7 @@ for(const name of Object.keys(priceOverlays)){
     toolbar.appendChild(button);
 }
 const indicatorNames=Object.keys(indicatorPanes[0].modes).flatMap(name=>
-    name===stochasticMode?[name,filteredStochasticMode,thirdStochasticMode]:[name]);
+    name===stochasticMode?[name,filteredStochasticMode,thirdStochasticMode,fourthStochasticMode]:[name]);
 for(const name of indicatorNames){
     const button=document.createElement('button');
     button.type='button';
