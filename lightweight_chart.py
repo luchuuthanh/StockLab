@@ -211,8 +211,9 @@ const volumeAverage=vol.addLineSeries({color:'#f8d05a',lineWidth:2,priceFormat:{
     priceLineVisible:false,lastValueVisible:false});
 volumeAverage.setData(data.volumeSma10);
 const stochasticMode='Bộ chỉ báo mua bán';
+const filteredStochasticMode='Bộ tín hiệu mua bán 2';
 const heikinAshiMode='Nến Heikin Ashi';
-const tallIndicatorModes=new Set([stochasticMode,heikinAshiMode]);
+const tallIndicatorModes=new Set([stochasticMode,filteredStochasticMode,heikinAshiMode]);
 function calculateHeikinAshi(candles){
     let previous;
     return candles.map(bar=>{
@@ -225,6 +226,32 @@ function calculateHeikinAshi(candles){
     });
 }
 const heikinAshiBars=calculateHeikinAshi(data.candles);
+const indexByDate=points=>new Map(points.map(point=>[point.time,point]));
+const heikinAshiByDate=indexByDate(heikinAshiBars);
+function passesHeikinAshiWickFilter(bar){
+    if(!bar)return false;
+    const bodyTop=Math.max(bar.open,bar.close);
+    const bodyBottom=Math.min(bar.open,bar.close);
+    const body=bodyTop-bodyBottom;
+    const upperWick=bar.high-bodyTop;
+    const lowerWick=bodyBottom-bar.low;
+    const tolerance=4*Number.EPSILON*Math.max(Math.abs(bar.high),Math.abs(bar.low));
+    return body>0&&Math.max(upperWick,lowerWick)<=0.35*body+tolerance;
+}
+function classifyStochasticMarkers(markers,barsByDate){
+    let fakeBuy=false;
+    return markers.map(marker=>{
+        const isBuy=marker.shape==='arrowUp';
+        if(isBuy)fakeBuy=!passesHeikinAshiWickFilter(barsByDate.get(marker.time));
+        const classified=fakeBuy?{...marker,text:isBuy?'Mua giả':'Bán giả'}:marker;
+        if(!isBuy)fakeBuy=false;
+        return classified;
+    });
+}
+const signalMarkers=new Map([
+    [stochasticMode,data.stochasticMarkers],
+    [filteredStochasticMode,classifyStochasticMarkers(data.stochasticMarkers,heikinAshiByDate)]
+]);
 const candleFocus=document.getElementById('candle-focus');
 function createIndicatorPane(id, sectionId, titleId){
     const root=document.getElementById(id);
@@ -244,7 +271,6 @@ function createIndicatorPane(id, sectionId, titleId){
         priceLineVisible:false,lastValueVisible:false,visible:false
     });
     stochasticBars.setData(data.stochasticBars);
-    stochasticBars.setMarkers(data.stochasticMarkers);
     const stochasticColors=['#f3f5fa','#48da87','#fce06a','#ff646a','#ec91ad','#69aaff'];
     const stochasticLines=Object.entries(data.stochastic).map(([name,points],i)=>{
         const series=osc.addLineSeries({
@@ -265,7 +291,7 @@ function createIndicatorPane(id, sectionId, titleId){
         .filter(([name])=>name==='Biên trên'||name==='Biên dưới').map(([,series])=>series)]);
     const display={RSI:[['RSI',rsi]],MACD:[['MACD',macd],['Signal',signal],['Histogram',hist]],
         MOM:[['MOM',mom]],[stochasticMode]:stochasticLines};
-    return {id,root,title,section,chart:osc,modes,display,candleFocusSeries,
+    return {id,root,title,section,chart:osc,modes,display,stochasticBars,candleFocusSeries,
         priceOverlays:createPriceOverlays(osc)};
 }
 const indicatorPanes=[
@@ -311,18 +337,27 @@ function resizeChartPanes(){
 function renderIndicators(){
     const range=price.timeScale().getVisibleLogicalRange();
     const candlesOnly=candleFocus.getAttribute('aria-pressed')==='true';
+    const firstSignalPane=selectedModes.findIndex(name=>signalMarkers.has(name));
     rangeUpdateInProgress=true;
     try {
         indicatorPanes.forEach((pane,i)=>{
             const mode=selectedModes[i];
             pane.section.hidden=!mode;
             if(!mode)return;
-            const stochasticActive=mode===stochasticMode;
+            const stochasticActive=signalMarkers.has(mode);
+            const seriesMode=stochasticActive?stochasticMode:mode;
             pane.title.textContent=mode;
-            if(stochasticActive)pane.title.parentElement.appendChild(candleFocus);
+            if(stochasticActive){
+                if(i===firstSignalPane)pane.title.parentElement.appendChild(candleFocus);
+                const markers=signalMarkers.get(mode);
+                if(pane.stochasticMarkers!==markers){
+                    pane.stochasticBars.setMarkers(markers);
+                    pane.stochasticMarkers=markers;
+                }
+            }
             for(const [name,series] of Object.entries(pane.modes)){
                 for(const item of series){
-                    item.applyOptions({visible:name===mode&&(!stochasticActive||!candlesOnly||pane.candleFocusSeries.has(item))});
+                    item.applyOptions({visible:name===seriesMode&&(!stochasticActive||!candlesOnly||pane.candleFocusSeries.has(item))});
                 }
             }
             pane.chart.priceScale('right').applyOptions({autoScale:true});
@@ -335,7 +370,7 @@ function renderIndicators(){
     } finally {
         rangeUpdateInProgress=false;
     }
-    candleFocus.hidden=!selectedModes.includes(stochasticMode);
+    candleFocus.hidden=firstSignalPane<0;
     for(const [name,button] of buttons){
         const selected=selectedModes.includes(name);
         button.classList.toggle('active',selected);
@@ -392,7 +427,9 @@ for(const name of Object.keys(priceOverlays)){
     updateButton();
     toolbar.appendChild(button);
 }
-for(const name of Object.keys(indicatorPanes[0].modes)){
+const indicatorNames=Object.keys(indicatorPanes[0].modes).flatMap(name=>
+    name===stochasticMode?[name,filteredStochasticMode]:[name]);
+for(const name of indicatorNames){
     const button=document.createElement('button');
     button.type='button';
     button.textContent=name;
@@ -407,9 +444,7 @@ for(const [,chart] of panes){
     chart.addLineSeries({visible:false,priceLineVisible:false,lastValueVisible:false}).setData(timeline);
 }
 const scales=panes.map(([,chart])=>chart.timeScale());
-const indexByDate=points=>new Map(points.map(point=>[point.time,point]));
 const pricesByDate=indexByDate(data.candles);
-const heikinAshiByDate=indexByDate(heikinAshiBars);
 const volumeByDate=indexByDate(data.volume);
 const volumeAverageByDate=indexByDate(data.volumeSma10);
 const valueSeries=Object.fromEntries(Object.entries({
@@ -456,9 +491,9 @@ function drawSession(){
         ...selectedModes.map((mode,i)=>mode===heikinAshiMode
             ? [day,...candleValues(heikinAshiByDate.get(selectedDate)),...overlayValues(indicatorPanes[i].priceOverlays)].join(' · ')
             : [
-            day,...(mode===stochasticMode&&candleFocus.getAttribute('aria-pressed')==='true'&&valueSeries['EMA 3'].has(selectedDate)
+            day,...(signalMarkers.has(mode)&&candleFocus.getAttribute('aria-pressed')==='true'&&valueSeries['EMA 3'].has(selectedDate)
                 ? ['Nến '+valueSeries['EMA 3'].get(selectedDate).value.toFixed(2)] : []),
-            ...visibleValues(indicatorPanes[i].display[mode],mode==='MACD'?3:2)
+            ...visibleValues(indicatorPanes[i].display[signalMarkers.has(mode)?stochasticMode:mode],mode==='MACD'?3:2)
         ].join(' · '))
     ];
     const x=price.timeScale().timeToCoordinate(selectedDate);
