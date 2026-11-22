@@ -229,14 +229,12 @@ const heikinAshiBars=calculateHeikinAshi(data.candles);
 const indexByDate=points=>new Map(points.map(point=>[point.time,point]));
 const heikinAshiByDate=indexByDate(heikinAshiBars);
 function passesHeikinAshiWickFilter(bar){
-    if(!bar)return false;
-    const bodyTop=Math.max(bar.open,bar.close);
-    const bodyBottom=Math.min(bar.open,bar.close);
-    const body=bodyTop-bodyBottom;
-    const upperWick=bar.high-bodyTop;
-    const lowerWick=bodyBottom-bar.low;
+    if(!bar||bar.close<=bar.open)return false;
+    const body=bar.close-bar.open;
+    const upperWick=bar.high-bar.close;
+    const lowerWick=bar.open-bar.low;
     const tolerance=4*Number.EPSILON*Math.max(Math.abs(bar.high),Math.abs(bar.low));
-    return body>0&&Math.max(upperWick,lowerWick)<=0.35*body+tolerance;
+    return Math.max(upperWick,lowerWick)<=0.35*body+tolerance;
 }
 function classifyStochasticMarkers(markers,barsByDate){
     let fakeBuy=false;
