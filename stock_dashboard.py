@@ -223,6 +223,20 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     out["MACD_HIST"] = out["MACD"] - out["MACD_SIGNAL"]
     return out
 
+def chart_with_warmed_ema100(daily_quotes, timeframe, display_start):
+    """Calculate EMA100 on earlier candles while keeping the chosen display range."""
+    from stock_compare import aggregate_candles
+
+    history = aggregate_candles(daily_quotes, timeframe)
+    ema100 = history.set_index("date")["close"].ewm(
+        span=100, adjust=False, min_periods=100
+    ).mean()
+    visible_quotes = daily_quotes.loc[daily_quotes["date"] >= pd.Timestamp(display_start)]
+    chart = add_indicators(aggregate_candles(visible_quotes, timeframe))
+    chart["EMA100"] = chart["date"].map(ema100)
+    return chart
+
+
 # Deliberately not cached: scan_market updates a live Streamlit progress element.
 def _scan_market_uncached_v2(instruments: pd.DataFrame, lookback_days: int = 260) -> tuple[pd.DataFrame, dict]:
     start = (date.today() - timedelta(days=lookback_days)).isoformat()
@@ -542,26 +556,35 @@ def render_stock_dashboard():
         selected = chart_symbols[0] if chart_symbols else default_chart_symbol
         st.caption("Biểu đồ hiển thị mã đầu tiên. Bảng đối chiếu bên dưới dùng dữ liệu quét cổ phiếu.")
         try:
-            from stock_compare import aggregate_candles
-            start = (date.today() - timedelta(days=chart_days)).isoformat()
-            end = date.today().isoformat()
+            today = date.today()
+            start = (today - timedelta(days=chart_days)).isoformat()
+            end = today.isoformat()
+            # Short display ranges reuse the same EMA100 calculation history.
+            warmup_days = {"1D": 365, "2D": 730, "3D": 1095, "1W": 1460, "1M": 4383}
+            history_start = (
+                today - timedelta(days=max(chart_days, 730) + warmup_days[timeframe])
+            ).isoformat()
+            chart_fetch = fetch_index_chart_quotes if selected in COMPARE_INDICES else fetch_chart_quotes
+            ticker = COMPARE_INDICES.get(selected, selected)
+            try:
+                raw_chart, chart_source = chart_fetch(ticker, history_start, end)
+            except MarketDataError:
+                raw_chart, chart_source = chart_fetch(ticker, start, end)
             if selected in COMPARE_INDICES:
-                clean_chart, chart_source = fetch_index_chart_quotes(COMPARE_INDICES[selected], start, end)
-                chart_warning = None
+                clean_chart, chart_warning = raw_chart, None
             else:
-                raw_chart, chart_source = fetch_chart_quotes(selected, start, end, interval="1D")
                 clean_chart, chart_warning = sanitize_daily_chart_bars(raw_chart)
             st.caption(f"Nguồn dữ liệu biểu đồ: {chart_source}.")
             if chart_warning:
                 st.warning(chart_warning)
-            chart = add_indicators(aggregate_candles(clean_chart, timeframe))
+            chart = chart_with_warmed_ema100(clean_chart, timeframe, start)
             chart = chart.dropna(subset=["date", "open", "high", "low", "close"])
             if chart.empty:
                 st.warning("Chưa có dữ liệu OHLC hợp lệ cho mã này.")
             else:
                 last = chart.iloc[-1]
                 bar_unit = "phiên" if timeframe == "1D" else "nến"
-                first_date = clean_chart["date"].min()
+                first_date = chart["date"].min()
                 st.caption(f"Dữ liệu thực tế: {first_date:%d/%m/%Y} đến {last['date']:%d/%m/%Y} · {len(chart):,} {bar_unit}.")
                 price_metric, volume_metric = st.columns(2)
                 close_label = "Điểm đóng cửa" if selected in COMPARE_INDICES else "Giá đóng cửa"
