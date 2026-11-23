@@ -146,7 +146,8 @@ def early_trade_markers(chart, stochastic, set_four_events):
     ha_confirmed = ha_close.gt(ha_close.shift()) & ha_close.gt(ha_close.shift(2))
     ema100 = chart["EMA100"]
     gap = (100 * (ema100 - chart["close"]) / ema100).round(10)
-    buy_cross = candle.gt(slow) & candle.shift().le(slow.shift())
+    # Early signal is the EMA 4 / EMA 8 crossover shown in this pane.
+    buy_cross = fast.gt(slow) & fast.shift().le(slow.shift())
     below_buy_ceiling = candle.lt(70)
     sell_cross = fast.lt(slow) & fast.shift().ge(slow.shift())
     below_both = candle.lt(fast) & candle.lt(slow)
