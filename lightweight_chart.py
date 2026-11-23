@@ -147,6 +147,7 @@ def early_trade_markers(chart, stochastic, set_four_events):
     ema100 = chart["EMA100"]
     gap = (100 * (ema100 - chart["close"]) / ema100).round(10)
     buy_cross = candle.gt(slow) & candle.shift().le(slow.shift())
+    below_buy_ceiling = candle.lt(70)
     sell_cross = fast.lt(slow) & fast.shift().ge(slow.shift())
     below_both = candle.lt(fast) & candle.lt(slow)
     markers = []
@@ -156,8 +157,9 @@ def early_trade_markers(chart, stochastic, set_four_events):
     warned = False
     watching = False
     watch_crossed = False
-    for day, buy, cross, below, bearish, ha_ok, distance in zip(
+    for day, buy, cross, below, bearish, ha_ok, distance, below_ceiling in zip(
         chart["date"], buy_cross, sell_cross, below_both, fast.lt(slow), ha_confirmed, gap,
+        below_buy_ceiling,
     ):
         time = day.strftime("%Y-%m-%d")
         in_watch_band = 5 <= distance <= 8.5
@@ -201,6 +203,8 @@ def early_trade_markers(chart, stochastic, set_four_events):
                 holding = "Mua giả"
                 markers.append({"time": time, "position": "belowBar", "color": "#32d981",
                                 "shape": "arrowUp", "text": holding})
+                continue
+            if not below_ceiling:
                 continue
             pending = True
             markers.append({"time": time, "position": "belowBar", "color": "#f6c453",
