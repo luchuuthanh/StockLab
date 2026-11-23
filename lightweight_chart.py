@@ -155,7 +155,7 @@ def early_trade_markers(chart, stochastic):
         chart["date"], buy_cross, sell_cross, below_both, fast.lt(slow), ha_confirmed, gap,
     ):
         time = day.strftime("%Y-%m-%d")
-        in_watch_band = 6 <= distance <= 8.5
+        in_watch_band = 5 <= distance <= 8.5
         if watching:
             watch_crossed = bearish and (watch_crossed or cross)
             if below and watch_crossed:
@@ -189,7 +189,7 @@ def early_trade_markers(chart, stochastic):
             continue
         if in_watch_band:
             continue
-        holding = "Mua giả" if 0 < distance < 6 else "Mua"
+        holding = "Mua giả" if 0 < distance < 5 else "Mua"
         markers.append({"time": time, "position": "belowBar", "color": "#32d981",
                         "shape": "arrowUp", "text": holding})
     return markers
