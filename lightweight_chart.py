@@ -163,7 +163,10 @@ def render_lightweight_chart(chart: pd.DataFrame, symbol: str, timeframe: str = 
         "middle": ichipoints(bb_middle),
         "lower": ichipoints(bb_middle - bb_width),
     }
-    chart = ordered
+    chart = ordered.copy()
+    # EMA 4/8 are display overlays only; trading signal calculations stay unchanged.
+    chart["EMA4"] = chart["close"].ewm(span=4, adjust=False).mean()
+    chart["EMA8"] = chart["close"].ewm(span=8, adjust=False).mean()
     def points(column):
         return [{"time": d.strftime("%Y-%m-%d"), "value": round(float(v), 6)}
                 for d, v in zip(chart["date"], chart[column]) if pd.notna(v)]
@@ -186,7 +189,7 @@ def render_lightweight_chart(chart: pd.DataFrame, symbol: str, timeframe: str = 
         stochastic_bars.append(bar)
     volume_sma10 = ichipoints(chart["volume"].rolling(10).mean())
     payload = json.dumps({"candles": candles, "volume": volume, "volumeSma10": volume_sma10,
-                          "overlays": {k: points(k) for k in ("EMA7", "SMA20", "EMA20", "EMA50", "EMA100")},
+                          "overlays": {k: points(k) for k in ("EMA4", "EMA8", "EMA7", "SMA20", "EMA20", "EMA50", "EMA100")},
                           "rsi": points("RSI14"), "macd": points("MACD"), "mom": points("MOM10"),
                           "signal": points("MACD_SIGNAL"), "hist": points("MACD_HIST"),
                           "symbol": symbol, "barUnit": "phiên" if timeframe == "1D" else "nến",
@@ -265,7 +268,7 @@ const price=L.createChart(document.getElementById('price'),{...base,width:Math.m
 const candleStyle={upColor:'#26a69a',downColor:'#ef5350',wickUpColor:'#26a69a',wickDownColor:'#ef5350',borderVisible:false};
 const candle=price.addCandlestickSeries(candleStyle);
 candle.setData(data.candles);
-const averageColors={EMA7:'#f8d05a',SMA20:'#37c3ff',EMA20:'#b48bff',EMA50:'#f59e73',EMA100:'#e5e7eb'};
+const averageColors={EMA4:'#00e5ff',EMA8:'#ff6ec7',EMA7:'#f8d05a',SMA20:'#37c3ff',EMA20:'#b48bff',EMA50:'#f59e73',EMA100:'#e5e7eb'};
 const ichimokuColors={Tenkan:'#ff9d43',Kijun:'#e95bb5',SenkouA:'#29bd88',SenkouB:'#f87171',Chikou:'#9acaff'};
 const ichimokuLabel='Ichimoku (9,26,52)';
 const bandLabels={upper:'BB trên',middle:'BB giữa',lower:'BB dưới'};
