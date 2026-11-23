@@ -134,8 +134,12 @@ def signal_set_four_events(bars, stochastic, *, after="", trade="", ready=False,
     return events, ready, trade
 
 
-def early_trade_markers(chart, stochastic):
-    """Use oscillator candles for crossings and price candles for entry filters."""
+def early_trade_markers(chart, stochastic, set_four_events):
+    """Wait for a Set 4 entry after an eligible early buy crossing."""
+    set_four_entries = {
+        event["time"]: event["text"] for event in set_four_events
+        if event["text"] in {"Mua", "Mua giả", "Mua VM"}
+    }
     candle = stochastic["EMA 3"]
     fast, slow = stochastic["EMA 4"], stochastic["EMA 8"]
     ha_close = chart[["open", "high", "low", "close"]].mean(axis=1)
@@ -147,6 +151,7 @@ def early_trade_markers(chart, stochastic):
     below_both = candle.lt(fast) & candle.lt(slow)
     markers = []
     holding = ""
+    pending = False
     bearish_cross = False
     warned = False
     watching = False
@@ -171,7 +176,7 @@ def early_trade_markers(chart, stochastic):
         if holding:
             bearish_cross = bearish and (bearish_cross or cross)
             if below and bearish_cross:
-                label = "Bán giả" if holding == "Mua giả" else "Bán"
+                label = {"Mua giả": "Bán giả", "Mua VM": "Bán VM"}.get(holding, "Bán")
                 markers.append({"time": time, "position": "aboveBar", "color": "#ff646a",
                                 "shape": "arrowDown", "text": label})
                 holding = ""
@@ -185,13 +190,33 @@ def early_trade_markers(chart, stochastic):
             else:
                 warned = False
             continue
-        if not buy or not ha_ok or pd.isna(distance):
-            continue
-        if in_watch_band:
-            continue
-        holding = "Mua giả" if 0 < distance < 5 else "Mua"
-        markers.append({"time": time, "position": "belowBar", "color": "#32d981",
-                        "shape": "arrowUp", "text": holding})
+        if pending:
+            bearish_cross = bearish and (bearish_cross or cross)
+            if below and bearish_cross:
+                pending = False
+                bearish_cross = False
+                continue
+        elif buy and ha_ok and pd.notna(distance) and not in_watch_band:
+            if 0 < distance < 5:
+                holding = "Mua giả"
+                markers.append({"time": time, "position": "belowBar", "color": "#32d981",
+                                "shape": "arrowUp", "text": holding})
+                continue
+            pending = True
+            markers.append({"time": time, "position": "belowBar", "color": "#f6c453",
+                            "shape": "circle", "size": 0, "text": "Chờ mua"})
+
+        if pending:
+            confirmation = set_four_entries.get(time)
+            if confirmation == "Mua giả":
+                markers.append({"time": time, "position": "belowBar", "color": "#f6c453",
+                                "shape": "circle", "size": 0, "text": "Mua giả"})
+            elif confirmation in {"Mua", "Mua VM"}:
+                holding = confirmation
+                pending = False
+                bearish_cross = False
+                markers.append({"time": time, "position": "belowBar", "color": "#32d981",
+                                "shape": "arrowUp", "text": holding})
     return markers
 
 
@@ -249,6 +274,9 @@ def render_lightweight_chart(chart: pd.DataFrame, symbol: str, timeframe: str = 
                        low=round(float(min(previous, current)), 6))
         stochastic_bars.append(bar)
     volume_sma10 = ichipoints(chart["volume"].rolling(10).mean())
+    set_four_events, _, _ = signal_set_four_events(
+        chart, stochastic, spans=(tenkan, kijun, span_a, span_b),
+    )
     payload = json.dumps({"candles": candles, "volume": volume, "volumeSma10": volume_sma10,
                           "overlays": {k: points(k) for k in ("EMA7", "SMA20", "EMA20", "EMA50", "EMA100")},
                           "rsi": points("RSI14"), "macd": points("MACD"), "mom": points("MOM10"),
@@ -258,10 +286,8 @@ def render_lightweight_chart(chart: pd.DataFrame, symbol: str, timeframe: str = 
                           "timeline": [day.strftime("%Y-%m-%d") for day in projected_dates],
                           "stochastic": {name: ichipoints(values) for name, values in stochastic.items()},
                           "stochasticBars": stochastic_bars,
-                          "earlyMarkers": early_trade_markers(chart, stochastic),
-                          "stochasticMarkers4": signal_set_four_events(
-                              chart, stochastic, spans=(tenkan, kijun, span_a, span_b),
-                          )[0],
+                          "earlyMarkers": early_trade_markers(chart, stochastic, set_four_events),
+                          "stochasticMarkers4": set_four_events,
                           "stochasticMarkers32": stochastic_trade_markers(stochastic, dates, buy_threshold=32),
                           "stochasticMarkers": stochastic_trade_markers(stochastic, dates)}, ensure_ascii=True).replace("</", "<\\/")
     html = """<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
