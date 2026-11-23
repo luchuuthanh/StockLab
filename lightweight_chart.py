@@ -467,8 +467,8 @@ const indicatorPanes=[
     createIndicatorPane('osc-2','indicator-2','indicator-title-2')
 ];
 const selectedModes=['RSI','MACD'];
-const signalLineNames=['EMA 3','EMA 3 lần hai','EMA 9','EMA 4','EMA 8'];
-const enabledSignalLines=new Set(['EMA 3','EMA 3 lần hai','EMA 9']);
+const signalLineNames=['%K thô','EMA 3','EMA 3 lần hai','EMA 9','EMA 4','EMA 8'];
+const enabledSignalLines=new Set(['%K thô','EMA 3','EMA 3 lần hai','EMA 9']);
 function syncSignalLineControls(pane,mode){
     const active=signalMarkers.has(mode);
     if(!pane.signalControls){
@@ -490,6 +490,8 @@ function syncSignalLineControls(pane,mode){
         pane.signalControls=controls;
     }
     pane.signalControls.hidden=!active;
+    // Inline display:flex overrides the HTML hidden attribute on some browsers.
+    pane.signalControls.style.display=active?'flex':'none';
     for(const button of pane.signalControls.children){
         const on=enabledSignalLines.has(button.textContent);
         button.classList.toggle('active',on);
