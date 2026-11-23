@@ -218,10 +218,25 @@ button.active{background:#186b7c;border-color:#32c7c5}#status{padding:4px 10px;m
     .indicator-header{height:30px}
     #candle-focus{padding:4px 8px}
 }
+#trade-history{box-sizing:border-box;height:320px;padding:10px;overflow:hidden}
+#trade-history h2{margin:0 0 8px;font-size:15px}
+#trade-history select{color:inherit;background:#263446;border:1px solid #415168;border-radius:5px;padding:4px}
+#trade-history p{margin:7px 0;font-size:12px}
+#trade-rows-scroll{height:205px;overflow:auto}
+#trade-history table{border-collapse:collapse;width:100%;white-space:nowrap;font-variant-numeric:tabular-nums}
+#trade-history th,#trade-history td{padding:6px 8px;text-align:left;border-bottom:1px solid #35465a}
+#trade-history th{position:sticky;top:0;background:#263446}
 </style></head><body><div id="toolbar"></div><div id="status">Chạm vào nến để xem giá · Vuốt để xem lịch sử · Chụm hai ngón để thu phóng</div>
 <div id="price"></div><div id="volume"></div>
 <section id="indicator-1" aria-labelledby="indicator-title-1"><div class="indicator-header"><h2 id="indicator-title-1"></h2><button id="candle-focus" type="button" aria-pressed="false" hidden>Chỉ xem nến</button></div><div class="indicator-chart" id="osc"></div></section>
 <section id="indicator-2" aria-labelledby="indicator-title-2" hidden><div class="indicator-header"><h2 id="indicator-title-2"></h2></div><div class="indicator-chart" id="osc-2"></div></section>
+<section id="trade-history" aria-labelledby="trade-history-title">
+<h2 id="trade-history-title">Phân tích tín hiệu mua bán</h2>
+<label>Bộ chỉ báo <select id="trade-set"><option value="0">Bộ 1</option><option value="1">Bộ 2</option><option value="2">Bộ 3</option><option value="3" selected>Bộ 4</option></select></label>
+<label>Loại <select id="trade-type"><option>Tất cả</option><option>Thường</option><option>Giả</option><option>VM</option></select></label>
+<p>Giá đóng cửa tại tín hiệu. Lợi nhuận theo tín hiệu, chưa tính phí.</p>
+<div id="trade-rows-scroll" tabindex="0"><table><thead><tr><th>Loại</th><th>Ngày mua</th><th>Giá mua</th><th>Ngày bán</th><th>Giá bán</th><th>% lợi nhuận</th><th>Trạng thái</th></tr></thead><tbody id="trade-rows"></tbody></table></div>
+</section>
 <div id="error"></div>
 <script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
 <script>
@@ -239,7 +254,7 @@ function chartSizes(){
     const header=30;
     const controlsHeight=document.getElementById('toolbar').offsetHeight
         +document.getElementById('status').offsetHeight;
-    const frameHeight=chartFrame?chartFrame.clientHeight-signalExtraHeight:window.innerHeight;
+    const frameHeight=chartFrame?chartFrame.clientHeight-signalExtraHeight-320:window.innerHeight-320;
     const plotHeight=Math.max(390,frameHeight-controlsHeight-2*header-8);
     const price=Math.round(plotHeight*0.44);
     const volume=Math.round(plotHeight*0.11);
@@ -332,6 +347,53 @@ const signalMarkers=new Map([
     [fourthStochasticMode,data.stochasticMarkers4.map(({price,...marker})=>
         marker.text.endsWith(' VM')?{...marker,text:marker.text+' · '+vmPriceFormat.format(price)}:marker)]
 ]);
+const tradeSet=document.getElementById('trade-set');
+const tradeType=document.getElementById('trade-type');
+const closingPrices=new Map(data.candles.map(bar=>[bar.time,bar.close]));
+function tradeHistory(events){
+    const rows=[];
+    let active=null;
+    for(const event of events){
+        const label=event.text.split(' · ')[0];
+        const price=closingPrices.get(event.time);
+        if(event.shape==='arrowUp'){
+            if(active&&label==='Mua VM')active.status='Chuyển sang Mua VM';
+            active={type:label==='Mua giả'?'Giả':label==='Mua VM'?'VM':'Thường',
+                start:event.time,entry:price,status:'Chưa bán'};
+            rows.push(active);
+        } else if(active){
+            active.end=event.time;
+            active.exit=price;
+            active.status=label;
+            active=null;
+        }
+    }
+    return rows.reverse();
+}
+const tradeHistories=Array.from(signalMarkers.values(),tradeHistory);
+const tradeDate=day=>day?day.split('-').reverse().join('/'):'—';
+const tradeNumber=value=>Number.isFinite(value)?vmPriceFormat.format(value):'—';
+function renderTradeHistory(){
+    const body=document.getElementById('trade-rows');
+    body.replaceChildren();
+    const rows=tradeHistories[Number(tradeSet.value)].filter(row=>
+        tradeType.value==='Tất cả'||row.type===tradeType.value);
+    if(!rows.length){
+        const cell=body.insertRow().insertCell();
+        cell.colSpan=7;
+        cell.textContent='Không có tín hiệu phù hợp trong lịch sử đang xem.';
+    }
+    for(const trade of rows){
+        const row=body.insertRow();
+        const result=trade.entry>0&&Number.isFinite(trade.exit)?100*(trade.exit/trade.entry-1):null;
+        const values=[trade.type,tradeDate(trade.start),tradeNumber(trade.entry),tradeDate(trade.end),
+            tradeNumber(trade.exit),result===null?'—':tradeNumber(result)+'%',trade.status];
+        values.forEach(value=>{row.insertCell().textContent=value;});
+    }
+}
+tradeSet.addEventListener('change',renderTradeHistory);
+tradeType.addEventListener('change',renderTradeHistory);
+renderTradeHistory();
 const candleFocus=document.getElementById('candle-focus');
 function createIndicatorPane(id, sectionId, titleId){
     const root=document.getElementById(id);
@@ -668,7 +730,7 @@ scheduleLayoutUpdate();
                 .st-key-stocklab_technical_chart { container-type: inline-size; }
                 .st-key-stocklab_technical_chart iframe {
                     --stocklab-chart-base-height: 1100px;
-                    height: calc(var(--stocklab-chart-base-height) + var(--stocklab-signal-extra, 0px)) !important;
+                    height: calc(var(--stocklab-chart-base-height) + var(--stocklab-signal-extra, 0px) + 320px) !important;
                 }
                 @container (max-width: 600px) {
                     .st-key-stocklab_technical_chart iframe {
@@ -678,4 +740,4 @@ scheduleLayoutUpdate();
                 }
             </style>
         """)
-        components.html(html, height=1100, scrolling=False)
+        components.html(html, height=1420, scrolling=False)
