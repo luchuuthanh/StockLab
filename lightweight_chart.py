@@ -218,7 +218,7 @@ button.active{background:#186b7c;border-color:#32c7c5}#status{padding:4px 10px;m
     .indicator-header{height:30px}
     #candle-focus{padding:4px 8px}
 }
-#trade-history{box-sizing:border-box;height:320px;padding:10px;overflow:hidden}
+#trade-history{box-sizing:border-box;height:355px;padding:10px;overflow:hidden}
 #trade-history h2{margin:0 0 8px;font-size:15px}
 #trade-history select{color:inherit;background:#263446;border:1px solid #415168;border-radius:5px;padding:4px}
 #trade-history p{margin:7px 0;font-size:12px}
@@ -254,7 +254,7 @@ function chartSizes(){
     const header=30;
     const controlsHeight=document.getElementById('toolbar').offsetHeight
         +document.getElementById('status').offsetHeight;
-    const frameHeight=chartFrame?chartFrame.clientHeight-signalExtraHeight-320:window.innerHeight-320;
+    const frameHeight=chartFrame?chartFrame.clientHeight-signalExtraHeight-355:window.innerHeight-355;
     const plotHeight=Math.max(390,frameHeight-controlsHeight-2*header-8);
     const price=Math.round(plotHeight*0.44);
     const volume=Math.round(plotHeight*0.11);
@@ -385,20 +385,31 @@ function renderTradeHistory(){
     }
     let total=0;
     let closedCount=0;
+    const bySale=new Map([['Bán',[0,0]],['Bán giả',[0,0]],['Bán VM',[0,0]]]);
     for(const trade of rows){
         const row=body.insertRow();
         const result=trade.entry>0&&Number.isFinite(trade.exit)?100*(trade.exit/trade.entry-1):null;
         if(result!==null){
             total+=result;
             closedCount++;
+            const subtotal=bySale.get(trade.status);
+            if(subtotal){
+                subtotal[0]+=result;
+                subtotal[1]++;
+            }
         }
         const values=[trade.type,tradeDate(trade.start),tradeNumber(trade.entry),tradeDate(trade.end),
             tradeNumber(trade.exit),result===null?'—':tradeNumber(result)+'%',trade.status];
         values.forEach(value=>{row.insertCell().textContent=value;});
     }
-    document.getElementById('trade-total').textContent=closedCount
+    const summaries=[closedCount
         ? 'Tổng % lợi nhuận: '+tradeNumber(total)+'% ('+closedCount+' cặp đã bán)'
-        : 'Tổng % lợi nhuận: — (chưa có cặp đã bán)';
+        : 'Tổng % lợi nhuận: — (chưa có cặp đã bán)'];
+    for(const [label,[sum,count]] of bySale){
+        const name=label==='Bán'?'Bán thường':label;
+        summaries.push(name+': '+(count?tradeNumber(sum)+'%':'—'));
+    }
+    document.getElementById('trade-total').textContent=summaries.join(' · ');
 }
 tradeSet.addEventListener('change',renderTradeHistory);
 tradeType.addEventListener('change',renderTradeHistory);
@@ -739,7 +750,7 @@ scheduleLayoutUpdate();
                 .st-key-stocklab_technical_chart { container-type: inline-size; }
                 .st-key-stocklab_technical_chart iframe {
                     --stocklab-chart-base-height: 1100px;
-                    height: calc(var(--stocklab-chart-base-height) + var(--stocklab-signal-extra, 0px) + 320px) !important;
+                    height: calc(var(--stocklab-chart-base-height) + var(--stocklab-signal-extra, 0px) + 355px) !important;
                 }
                 @container (max-width: 600px) {
                     .st-key-stocklab_technical_chart iframe {
@@ -749,4 +760,4 @@ scheduleLayoutUpdate();
                 }
             </style>
         """)
-        components.html(html, height=1420, scrolling=False)
+        components.html(html, height=1455, scrolling=False)
