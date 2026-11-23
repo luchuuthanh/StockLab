@@ -134,6 +134,53 @@ def signal_set_four_events(bars, stochastic, *, after="", trade="", ready=False,
     return events, ready, trade
 
 
+def early_trade_markers(chart, stochastic):
+    """Use oscillator candles for crossings and price candles for entry filters."""
+    candle = stochastic["EMA 3"]
+    fast, slow = stochastic["EMA 4"], stochastic["EMA 8"]
+    ha_close = chart[["open", "high", "low", "close"]].mean(axis=1)
+    ha_confirmed = ha_close.gt(ha_close.shift()) & ha_close.gt(ha_close.shift(2))
+    ema100 = chart["EMA100"]
+    gap = 100 * (ema100 - chart["close"]) / ema100
+    buy_cross = candle.gt(slow) & candle.shift().le(slow.shift())
+    sell_cross = fast.lt(slow) & fast.shift().ge(slow.shift())
+    below_both = candle.lt(fast) & candle.lt(slow)
+    markers = []
+    holding = ""
+    bearish_cross = False
+    warned = False
+    for day, buy, cross, below, bearish, ha_ok, distance in zip(
+        chart["date"], buy_cross, sell_cross, below_both, fast.lt(slow), ha_confirmed, gap,
+    ):
+        time = day.strftime("%Y-%m-%d")
+        if holding:
+            bearish_cross = bearish and (bearish_cross or cross)
+            if below and bearish_cross:
+                label = "Bán giả" if holding == "Mua giả" else "Bán"
+                markers.append({"time": time, "position": "aboveBar", "color": "#ff646a",
+                                "shape": "arrowDown", "text": label})
+                holding = ""
+                bearish_cross = False
+                warned = False
+            elif below:
+                if not warned:
+                    markers.append({"time": time, "position": "aboveBar", "color": "#ff646a",
+                                    "shape": "circle", "size": 0, "text": "✕"})
+                warned = True
+            else:
+                warned = False
+            continue
+        if not buy or not ha_ok or pd.isna(distance):
+            continue
+        # No entry class was specified for the interval between the two limits.
+        if 6 <= distance <= 8.5:
+            continue
+        holding = "Mua giả" if 0 < distance < 6 else "Mua"
+        markers.append({"time": time, "position": "belowBar", "color": "#32d981",
+                        "shape": "arrowUp", "text": holding})
+    return markers
+
+
 def render_lightweight_chart(chart: pd.DataFrame, symbol: str, timeframe: str = "1D") -> None:
     """Render interactive candles with touch navigation, volume and selectable overlays."""
     # Standard Ichimoku (9, 26, 52), with 26-period projection.
@@ -164,9 +211,6 @@ def render_lightweight_chart(chart: pd.DataFrame, symbol: str, timeframe: str = 
         "lower": ichipoints(bb_middle - bb_width),
     }
     chart = ordered.copy()
-    # EMA 4/8 are display overlays only; trading signal calculations stay unchanged.
-    chart["EMA4"] = chart["close"].ewm(span=4, adjust=False).mean()
-    chart["EMA8"] = chart["close"].ewm(span=8, adjust=False).mean()
     def points(column):
         return [{"time": d.strftime("%Y-%m-%d"), "value": round(float(v), 6)}
                 for d, v in zip(chart["date"], chart[column]) if pd.notna(v)]
@@ -178,7 +222,7 @@ def render_lightweight_chart(chart: pd.DataFrame, symbol: str, timeframe: str = 
                "color": "#26a69a88" if row.close >= row.open else "#ef535088"}
               for row in chart.itertuples(index=False) if pd.notna(row.volume)]
     stochastic = calculate_stochastic_trial(chart)
-    # Additional display-only signal-pane averages of the oscillator candle close.
+    # Signal-pane averages of the oscillator candle close.
     stochastic["EMA 4"] = stochastic["EMA 3"].ewm(span=4, adjust=False).mean().where(stochastic["EMA 3"].notna())
     stochastic["EMA 8"] = stochastic["EMA 3"].ewm(span=8, adjust=False).mean().where(stochastic["EMA 3"].notna())
     stochastic_bars = []
@@ -192,7 +236,7 @@ def render_lightweight_chart(chart: pd.DataFrame, symbol: str, timeframe: str = 
         stochastic_bars.append(bar)
     volume_sma10 = ichipoints(chart["volume"].rolling(10).mean())
     payload = json.dumps({"candles": candles, "volume": volume, "volumeSma10": volume_sma10,
-                          "overlays": {k: points(k) for k in ("EMA4", "EMA8", "EMA7", "SMA20", "EMA20", "EMA50", "EMA100")},
+                          "overlays": {k: points(k) for k in ("EMA7", "SMA20", "EMA20", "EMA50", "EMA100")},
                           "rsi": points("RSI14"), "macd": points("MACD"), "mom": points("MOM10"),
                           "signal": points("MACD_SIGNAL"), "hist": points("MACD_HIST"),
                           "symbol": symbol, "barUnit": "phiên" if timeframe == "1D" else "nến",
@@ -200,6 +244,7 @@ def render_lightweight_chart(chart: pd.DataFrame, symbol: str, timeframe: str = 
                           "timeline": [day.strftime("%Y-%m-%d") for day in projected_dates],
                           "stochastic": {name: ichipoints(values) for name, values in stochastic.items()},
                           "stochasticBars": stochastic_bars,
+                          "earlyMarkers": early_trade_markers(chart, stochastic),
                           "stochasticMarkers4": signal_set_four_events(
                               chart, stochastic, spans=(tenkan, kijun, span_a, span_b),
                           )[0],
@@ -238,7 +283,7 @@ button.active{background:#186b7c;border-color:#32c7c5}#status{padding:4px 10px;m
 <section id="indicator-2" aria-labelledby="indicator-title-2" hidden><div class="indicator-header"><h2 id="indicator-title-2"></h2></div><div class="indicator-chart" id="osc-2"></div></section>
 <section id="trade-history" aria-labelledby="trade-history-title">
 <h2 id="trade-history-title">Phân tích tín hiệu mua bán</h2>
-<label>Bộ chỉ báo <select id="trade-set"><option value="0">Bộ 1</option><option value="1">Bộ 2</option><option value="2">Bộ 3</option><option value="3" selected>Bộ 4</option></select></label>
+<label>Bộ chỉ báo <select id="trade-set"><option value="0">Bộ 1</option><option value="1">Bộ 2</option><option value="2">Bộ 3</option><option value="3" selected>Bộ 4</option><option value="4">Mua bán sớm</option></select></label>
 <label>Loại <select id="trade-type"><option>Tất cả</option><option>Thường</option><option>Giả</option><option>VM</option></select></label>
 <p>Giá đóng cửa tại tín hiệu. Lợi nhuận chưa tính phí. <strong id="trade-total" aria-live="polite"></strong></p>
 <div id="trade-rows-scroll" tabindex="0"><table><thead><tr><th>Loại</th><th>Ngày mua</th><th>Giá mua</th><th>Ngày bán</th><th>Giá bán</th><th>% lợi nhuận</th><th>Trạng thái</th></tr></thead><tbody id="trade-rows"></tbody></table></div>
@@ -271,7 +316,7 @@ const price=L.createChart(document.getElementById('price'),{...base,width:Math.m
 const candleStyle={upColor:'#26a69a',downColor:'#ef5350',wickUpColor:'#26a69a',wickDownColor:'#ef5350',borderVisible:false};
 const candle=price.addCandlestickSeries(candleStyle);
 candle.setData(data.candles);
-const averageColors={EMA4:'#00e5ff',EMA8:'#ff6ec7',EMA7:'#f8d05a',SMA20:'#37c3ff',EMA20:'#b48bff',EMA50:'#f59e73',EMA100:'#e5e7eb'};
+const averageColors={EMA7:'#f8d05a',SMA20:'#37c3ff',EMA20:'#b48bff',EMA50:'#f59e73',EMA100:'#e5e7eb'};
 const ichimokuColors={Tenkan:'#ff9d43',Kijun:'#e95bb5',SenkouA:'#29bd88',SenkouB:'#f87171',Chikou:'#9acaff'};
 const ichimokuLabel='Ichimoku (9,26,52)';
 const bandLabels={upper:'BB trên',middle:'BB giữa',lower:'BB dưới'};
@@ -307,7 +352,8 @@ const filteredStochasticMode='Bộ tín hiệu mua bán 2';
 const heikinAshiMode='Nến Heikin Ashi';
 const thirdStochasticMode='Bộ tín hiệu mua bán 3';
 const fourthStochasticMode='Bộ tín hiệu mua bán 4';
-const tallIndicatorModes=new Set([stochasticMode,filteredStochasticMode,thirdStochasticMode,fourthStochasticMode,heikinAshiMode]);
+const earlyTradeMode='Bộ chỉ số mua bán sớm';
+const tallIndicatorModes=new Set([stochasticMode,filteredStochasticMode,thirdStochasticMode,fourthStochasticMode,earlyTradeMode,heikinAshiMode]);
 function calculateHeikinAshi(candles){
     let previous;
     return candles.map(bar=>{
@@ -351,7 +397,8 @@ const signalMarkers=new Map([
     [filteredStochasticMode,classifyStochasticMarkers(data.stochasticMarkers,heikinAshiByDate)],
     [thirdStochasticMode,thirdStochasticMarkers],
     [fourthStochasticMode,data.stochasticMarkers4.map(({price,...marker})=>
-        marker.text.endsWith(' VM')?{...marker,text:marker.text+' · '+vmPriceFormat.format(price)}:marker)]
+        marker.text.endsWith(' VM')?{...marker,text:marker.text+' · '+vmPriceFormat.format(price)}:marker)],
+    [earlyTradeMode,data.earlyMarkers]
 ]);
 const tradeSet=document.getElementById('trade-set');
 const tradeType=document.getElementById('trade-type');
@@ -367,7 +414,7 @@ function tradeHistory(events){
             active={type:label==='Mua giả'?'Giả':label==='Mua VM'?'VM':'Thường',
                 start:event.time,entry:price,status:'Chưa bán'};
             rows.push(active);
-        } else if(active){
+        } else if(active&&event.shape==='arrowDown'){
             active.end=event.time;
             active.exit=price;
             active.status=label;
@@ -469,6 +516,7 @@ const indicatorPanes=[
 const selectedModes=['RSI','MACD'];
 const signalLineNames=['%K thô','EMA 3','EMA 3 lần hai','EMA 9','EMA 4','EMA 8'];
 const enabledSignalLines=new Set(['%K thô','EMA 3','EMA 3 lần hai','EMA 9']);
+const earlySignalLines=new Set(['EMA 4','EMA 8']);
 function syncSignalLineControls(pane,mode){
     const active=signalMarkers.has(mode);
     if(!pane.signalControls){
@@ -480,8 +528,9 @@ function syncSignalLineControls(pane,mode){
             button.type='button';
             button.textContent=name;
             button.onclick=()=>{
-                if(enabledSignalLines.has(name))enabledSignalLines.delete(name);
-                else enabledSignalLines.add(name);
+                const lines=pane.enabledSignalLines;
+                if(lines.has(name))lines.delete(name);
+                else lines.add(name);
                 renderIndicators();
             };
             controls.appendChild(button);
@@ -492,8 +541,9 @@ function syncSignalLineControls(pane,mode){
     pane.signalControls.hidden=!active;
     // Inline display:flex overrides the HTML hidden attribute on some browsers.
     pane.signalControls.style.display=active?'flex':'none';
+    pane.enabledSignalLines=mode===earlyTradeMode?earlySignalLines:enabledSignalLines;
     for(const button of pane.signalControls.children){
-        const on=enabledSignalLines.has(button.textContent);
+        const on=pane.enabledSignalLines.has(button.textContent);
         button.classList.toggle('active',on);
         button.setAttribute('aria-pressed',String(on));
     }
@@ -558,7 +608,7 @@ function renderIndicators(){
             for(const [name,series] of Object.entries(pane.modes)){
                 for(const item of series){
                     const lineName=stochasticActive?pane.stochasticLines.find(([,line])=>line===item)?.[0]:null;
-                    const lineEnabled=!lineName||!signalLineNames.includes(lineName)||enabledSignalLines.has(lineName);
+                    const lineEnabled=!lineName||!signalLineNames.includes(lineName)||pane.enabledSignalLines.has(lineName);
                     item.applyOptions({visible:name===seriesMode&&lineEnabled&&(!stochasticActive||!candlesOnly||pane.candleFocusSeries.has(item))});
                 }
             }
@@ -630,7 +680,7 @@ for(const name of Object.keys(priceOverlays)){
     toolbar.appendChild(button);
 }
 const indicatorNames=Object.keys(indicatorPanes[0].modes).flatMap(name=>
-    name===stochasticMode?[name,filteredStochasticMode,thirdStochasticMode,fourthStochasticMode]:[name]);
+    name===stochasticMode?[name,filteredStochasticMode,thirdStochasticMode,fourthStochasticMode,earlyTradeMode]:[name]);
 for(const name of indicatorNames){
     const button=document.createElement('button');
     button.type='button';
