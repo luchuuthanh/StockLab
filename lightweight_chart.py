@@ -141,7 +141,7 @@ def early_trade_markers(chart, stochastic):
     ha_close = chart[["open", "high", "low", "close"]].mean(axis=1)
     ha_confirmed = ha_close.gt(ha_close.shift()) & ha_close.gt(ha_close.shift(2))
     ema100 = chart["EMA100"]
-    gap = 100 * (ema100 - chart["close"]) / ema100
+    gap = (100 * (ema100 - chart["close"]) / ema100).round(10)
     buy_cross = candle.gt(slow) & candle.shift().le(slow.shift())
     sell_cross = fast.lt(slow) & fast.shift().ge(slow.shift())
     below_both = candle.lt(fast) & candle.lt(slow)
@@ -149,10 +149,25 @@ def early_trade_markers(chart, stochastic):
     holding = ""
     bearish_cross = False
     warned = False
+    watching = False
+    watch_crossed = False
     for day, buy, cross, below, bearish, ha_ok, distance in zip(
         chart["date"], buy_cross, sell_cross, below_both, fast.lt(slow), ha_confirmed, gap,
     ):
         time = day.strftime("%Y-%m-%d")
+        in_watch_band = 6 <= distance <= 8.5
+        if watching:
+            watch_crossed = bearish and (watch_crossed or cross)
+            if below and watch_crossed:
+                markers.append({"time": time, "position": "aboveBar", "color": "#f6c453",
+                                "shape": "circle", "size": 0, "text": "◆ Bán theo dõi"})
+                watching = False
+        elif buy and ha_ok and in_watch_band:
+            markers.append({"time": time, "position": "belowBar", "color": "#f6c453",
+                            "shape": "circle", "size": 0, "text": "◆ Mua theo dõi"})
+            watching = True
+            watch_crossed = False
+
         if holding:
             bearish_cross = bearish and (bearish_cross or cross)
             if below and bearish_cross:
@@ -172,8 +187,7 @@ def early_trade_markers(chart, stochastic):
             continue
         if not buy or not ha_ok or pd.isna(distance):
             continue
-        # No entry class was specified for the interval between the two limits.
-        if 6 <= distance <= 8.5:
+        if in_watch_band:
             continue
         holding = "Mua giả" if 0 < distance < 6 else "Mua"
         markers.append({"time": time, "position": "belowBar", "color": "#32d981",
