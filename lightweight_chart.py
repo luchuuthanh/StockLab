@@ -234,7 +234,7 @@ button.active{background:#186b7c;border-color:#32c7c5}#status{padding:4px 10px;m
 <h2 id="trade-history-title">Phân tích tín hiệu mua bán</h2>
 <label>Bộ chỉ báo <select id="trade-set"><option value="0">Bộ 1</option><option value="1">Bộ 2</option><option value="2">Bộ 3</option><option value="3" selected>Bộ 4</option></select></label>
 <label>Loại <select id="trade-type"><option>Tất cả</option><option>Thường</option><option>Giả</option><option>VM</option></select></label>
-<p>Giá đóng cửa tại tín hiệu. Lợi nhuận theo tín hiệu, chưa tính phí.</p>
+<p>Giá đóng cửa tại tín hiệu. Lợi nhuận chưa tính phí. <strong id="trade-total" aria-live="polite"></strong></p>
 <div id="trade-rows-scroll" tabindex="0"><table><thead><tr><th>Loại</th><th>Ngày mua</th><th>Giá mua</th><th>Ngày bán</th><th>Giá bán</th><th>% lợi nhuận</th><th>Trạng thái</th></tr></thead><tbody id="trade-rows"></tbody></table></div>
 </section>
 <div id="error"></div>
@@ -383,13 +383,22 @@ function renderTradeHistory(){
         cell.colSpan=7;
         cell.textContent='Không có tín hiệu phù hợp trong lịch sử đang xem.';
     }
+    let total=0;
+    let closedCount=0;
     for(const trade of rows){
         const row=body.insertRow();
         const result=trade.entry>0&&Number.isFinite(trade.exit)?100*(trade.exit/trade.entry-1):null;
+        if(result!==null){
+            total+=result;
+            closedCount++;
+        }
         const values=[trade.type,tradeDate(trade.start),tradeNumber(trade.entry),tradeDate(trade.end),
             tradeNumber(trade.exit),result===null?'—':tradeNumber(result)+'%',trade.status];
         values.forEach(value=>{row.insertCell().textContent=value;});
     }
+    document.getElementById('trade-total').textContent=closedCount
+        ? 'Tổng % lợi nhuận: '+tradeNumber(total)+'% ('+closedCount+' cặp đã bán)'
+        : 'Tổng % lợi nhuận: — (chưa có cặp đã bán)';
 }
 tradeSet.addEventListener('change',renderTradeHistory);
 tradeType.addEventListener('change',renderTradeHistory);
