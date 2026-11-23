@@ -153,6 +153,7 @@ def early_trade_markers(chart, stochastic, set_four_events):
     markers = []
     holding = ""
     pending = False
+    pending_fake = False
     bearish_cross = False
     warned = False
     watching = False
@@ -178,6 +179,10 @@ def early_trade_markers(chart, stochastic, set_four_events):
         if holding:
             bearish_cross = bearish and (bearish_cross or cross)
             if below and bearish_cross:
+                if pending_fake:
+                    markers.append({"time": time, "position": "aboveBar", "color": "#ff646a",
+                                    "shape": "arrowDown", "text": "Bán giả"})
+                    pending_fake = False
                 label = {"Mua giả": "Bán giả", "Mua VM": "Bán VM"}.get(holding, "Bán")
                 markers.append({"time": time, "position": "aboveBar", "color": "#ff646a",
                                 "shape": "arrowDown", "text": label})
@@ -195,6 +200,10 @@ def early_trade_markers(chart, stochastic, set_four_events):
         if pending:
             bearish_cross = bearish and (bearish_cross or cross)
             if below and bearish_cross:
+                if pending_fake:
+                    markers.append({"time": time, "position": "aboveBar", "color": "#ff646a",
+                                    "shape": "arrowDown", "text": "Bán giả"})
+                    pending_fake = False
                 pending = False
                 bearish_cross = False
                 continue
@@ -212,9 +221,10 @@ def early_trade_markers(chart, stochastic, set_four_events):
 
         if pending:
             confirmation = set_four_entries.get(time)
-            if confirmation == "Mua giả":
+            if confirmation == "Mua giả" and not pending_fake:
+                pending_fake = True
                 markers.append({"time": time, "position": "belowBar", "color": "#f6c453",
-                                "shape": "circle", "size": 0, "text": "Mua giả"})
+                                "shape": "arrowUp", "text": "Mua giả"})
             elif confirmation in {"Mua", "Mua VM"}:
                 holding = confirmation
                 pending = False
@@ -447,13 +457,24 @@ const signalMarkers=new Map([
 const tradeSet=document.getElementById('trade-set');
 const tradeType=document.getElementById('trade-type');
 const closingPrices=new Map(data.candles.map(bar=>[bar.time,bar.close]));
-function tradeHistory(events){
+function tradeHistory(events,independentFake=false){
     const rows=[];
     let active=null;
+    let activeFake=null;
     for(const event of events){
         const label=event.text.split(' · ')[0];
         const price=closingPrices.get(event.time);
-        if(event.shape==='arrowUp'){
+        if(independentFake && event.shape==='arrowUp' && label==='Mua giả'){
+            activeFake={type:'Giả',start:event.time,entry:price,status:'Chưa bán'};
+            rows.push(activeFake);
+        } else if(independentFake && event.shape==='arrowDown' && label==='Bán giả'){
+            if(activeFake){
+                activeFake.end=event.time;
+                activeFake.exit=price;
+                activeFake.status=label;
+                activeFake=null;
+            }
+        } else if(event.shape==='arrowUp'){
             if(active&&label==='Mua VM')active.status='Chuyển sang Mua VM';
             active={type:label==='Mua giả'?'Giả':label==='Mua VM'?'VM':'Thường',
                 start:event.time,entry:price,status:'Chưa bán'};
@@ -467,7 +488,8 @@ function tradeHistory(events){
     }
     return rows.reverse();
 }
-const tradeHistories=Array.from(signalMarkers.values(),tradeHistory);
+const tradeHistories=Array.from(signalMarkers,([mode,events])=>
+    tradeHistory(events,mode===earlyTradeMode));
 const tradeDate=day=>day?day.split('-').reverse().join('/'):'—';
 const tradeNumber=value=>Number.isFinite(value)?vmPriceFormat.format(value):'—';
 function renderTradeHistory(){
