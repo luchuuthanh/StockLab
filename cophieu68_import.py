@@ -163,7 +163,13 @@ def fetch_cophieu68_history(
             break
     if not frames:
         raise ValueError("Không đọc được bảng lịch sử OHLCV từ Cophieu68")
-    return pd.concat(frames, ignore_index=True).drop_duplicates("date").sort_values("date")
+    history = pd.concat(frames, ignore_index=True).drop_duplicates("date").sort_values("date")
+    if symbol == "VNE":
+        # VNE's last HOSE session was 26/06/2026 and its first UPCoM
+        # session was 13/07/2026. The feed can contain bars in this gap.
+        transfer_gap = history["date"].between(pd.Timestamp("2026-06-29"), pd.Timestamp("2026-07-12"))
+        history = history.loc[~transfer_gap]
+    return history
 
 
 def render_cophieu68_import():
