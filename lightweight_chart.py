@@ -178,6 +178,9 @@ def render_lightweight_chart(chart: pd.DataFrame, symbol: str, timeframe: str = 
                "color": "#26a69a88" if row.close >= row.open else "#ef535088"}
               for row in chart.itertuples(index=False) if pd.notna(row.volume)]
     stochastic = calculate_stochastic_trial(chart)
+    # Additional display-only signal-pane averages of the oscillator candle close.
+    stochastic["EMA 4"] = stochastic["EMA 3"].ewm(span=4, adjust=False).mean().where(stochastic["EMA 3"].notna())
+    stochastic["EMA 8"] = stochastic["EMA 3"].ewm(span=8, adjust=False).mean().where(stochastic["EMA 3"].notna())
     stochastic_bars = []
     green = stochastic["EMA 3"]
     for day, previous, current in zip(dates, green.shift(), green):
@@ -436,10 +439,10 @@ function createIndicatorPane(id, sectionId, titleId){
         priceLineVisible:false,lastValueVisible:false,visible:false
     });
     stochasticBars.setData(data.stochasticBars);
-    const stochasticColors=['#f3f5fa','#48da87','#fce06a','#ff646a','#ec91ad','#69aaff'];
+    const stochasticColorMap={'%K thô':'#f3f5fa','EMA 3':'#48da87','EMA 3 lần hai':'#fce06a','EMA 9':'#ff646a','EMA 4':'#00e5ff','EMA 8':'#ff6ec7','Biên trên':'#ec91ad','Biên dưới':'#69aaff'};
     const stochasticLines=Object.entries(data.stochastic).map(([name,points],i)=>{
         const series=osc.addLineSeries({
-            color:stochasticColors[i],lineWidth:1,lineStyle:i<4?0:2,
+            color:stochasticColorMap[name]||"#f3f5fa",lineWidth:1,lineStyle:name.startsWith("Biên")?2:0,
             priceLineVisible:false,lastValueVisible:false,visible:false
         });
         series.setData(points);
@@ -456,7 +459,7 @@ function createIndicatorPane(id, sectionId, titleId){
         .filter(([name])=>name==='Biên trên'||name==='Biên dưới').map(([,series])=>series)]);
     const display={RSI:[['RSI',rsi]],MACD:[['MACD',macd],['Signal',signal],['Histogram',hist]],
         MOM:[['MOM',mom]],[stochasticMode]:stochasticLines};
-    return {id,root,title,section,chart:osc,modes,display,stochasticBars,candleFocusSeries,
+    return {id,root,title,section,chart:osc,modes,display,stochasticLines,stochasticBars,candleFocusSeries,
         priceOverlays:createPriceOverlays(osc)};
 }
 const indicatorPanes=[
@@ -464,6 +467,35 @@ const indicatorPanes=[
     createIndicatorPane('osc-2','indicator-2','indicator-title-2')
 ];
 const selectedModes=['RSI','MACD'];
+const signalLineNames=['EMA 3','EMA 3 lần hai','EMA 9','EMA 4','EMA 8'];
+const enabledSignalLines=new Set(['EMA 3','EMA 3 lần hai','EMA 9']);
+function syncSignalLineControls(pane,mode){
+    const active=signalMarkers.has(mode);
+    if(!pane.signalControls){
+        const controls=document.createElement('div');
+        controls.className='signal-line-controls';
+        controls.style.cssText='display:flex;flex-wrap:wrap;gap:4px;padding:4px 6px';
+        for(const name of signalLineNames){
+            const button=document.createElement('button');
+            button.type='button';
+            button.textContent=name;
+            button.onclick=()=>{
+                if(enabledSignalLines.has(name))enabledSignalLines.delete(name);
+                else enabledSignalLines.add(name);
+                renderIndicators();
+            };
+            controls.appendChild(button);
+        }
+        pane.section.insertBefore(controls,pane.root);
+        pane.signalControls=controls;
+    }
+    pane.signalControls.hidden=!active;
+    for(const button of pane.signalControls.children){
+        const on=enabledSignalLines.has(button.textContent);
+        button.classList.toggle('active',on);
+        button.setAttribute('aria-pressed',String(on));
+    }
+}
 const buttons=new Map();
 function syncPriceOverlays(){
     function applyVisibility(groups,active){
@@ -512,6 +544,7 @@ function renderIndicators(){
             const stochasticActive=signalMarkers.has(mode);
             const seriesMode=stochasticActive?stochasticMode:mode;
             pane.title.textContent=mode;
+            syncSignalLineControls(pane,mode);
             if(stochasticActive){
                 if(i===firstSignalPane)pane.title.parentElement.appendChild(candleFocus);
                 const markers=signalMarkers.get(mode);
@@ -522,7 +555,9 @@ function renderIndicators(){
             }
             for(const [name,series] of Object.entries(pane.modes)){
                 for(const item of series){
-                    item.applyOptions({visible:name===seriesMode&&(!stochasticActive||!candlesOnly||pane.candleFocusSeries.has(item))});
+                    const lineName=stochasticActive?pane.stochasticLines.find(([,line])=>line===item)?.[0]:null;
+                    const lineEnabled=!lineName||!signalLineNames.includes(lineName)||enabledSignalLines.has(lineName);
+                    item.applyOptions({visible:name===seriesMode&&lineEnabled&&(!stochasticActive||!candlesOnly||pane.candleFocusSeries.has(item))});
                 }
             }
             pane.chart.priceScale('right').applyOptions({autoScale:true});
