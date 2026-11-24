@@ -312,10 +312,11 @@ def daily_price_band_flags(bars: pd.DataFrame, exchange: str, symbol: str = "") 
     return flagged
 
 
-def show_daily_price_review(bars: pd.DataFrame, symbol: str, exchange: str, start: str) -> None:
+def show_daily_price_review(bars: pd.DataFrame, symbol: str, exchange: str, start: str) -> list[dict]:
     band = DAILY_PRICE_BANDS.get(exchange)
     if band is None:
-        return
+        return []
+    records = []
     with st.expander(f"Kiểm tra nến ngày · {exchange} ±{band:.0%}"):
         st.caption("HOSE ±7% · HNX ±10% · UPCoM ±15% so với giá tham chiếu.")
         st.caption("Nguồn biểu đồ chưa có giá tham chiếu chính thức. HOSE và HNX dùng giá đóng cửa phiên trước để rà soát. "
@@ -325,6 +326,11 @@ def show_daily_price_review(bars: pd.DataFrame, symbol: str, exchange: str, star
             _, trailing_gap = missing_trading_sessions(bars["date"], pd.Timestamp(vietnam_market_date()) - pd.Timedelta(days=1))
             if trailing_gap >= 5:
                 last_date = bars["date"].iloc[-1]
+                records.append({"Ngày": last_date, "Mã": symbol, "Sàn": exchange,
+                                "Trạng thái": "Cần kiểm tra",
+                                "Lý do": f"Thiếu {trailing_gap} ngày làm việc sau cây cuối",
+                                "Hệ thống xử lý": "Giữ phiên gần nhất, chờ đối chiếu lịch sàn",
+                                "Nguồn": ""})
                 st.warning(f"Dữ liệu dừng ở {last_date:%d/%m/%Y}. Có {trailing_gap} ngày làm việc chưa thấy nến. "
                            "Kiểm tra thông báo hạn chế, tạm ngừng giao dịch hoặc tình trạng nguồn dữ liệu.")
         flagged = daily_price_band_flags(bars, exchange, symbol)
@@ -345,6 +351,14 @@ def show_daily_price_review(bars: pd.DataFrame, symbol: str, exchange: str, star
             st.caption("Có sự kiện: đối chiếu công bố của sàn/VSDC và giá tham chiếu sau điều chỉnh. "
                        "Chưa thấy sự kiện: đối chiếu OHLCV với nguồn khác, kiểm tra chuyển sàn hoặc giao dịch trở lại. "
                        "App giữ dữ liệu gốc cho đến khi xác minh được cách sửa.")
+            for row in flagged.itertuples():
+                if symbol == "VNE" and row.date == pd.Timestamp("2026-07-13"):
+                    continue  # The confirmed transfer is already in the change log.
+                records.append({"Ngày": row.date, "Mã": symbol, "Sàn": row.exchange,
+                                "Trạng thái": "Cần kiểm tra",
+                                "Lý do": f"{row.reason} · {row.rights}",
+                                "Hệ thống xử lý": "Giữ nến, chờ xác minh",
+                                "Nguồn": f"https://cophieu68.vn/quote/event.php?id={symbol.lower()}"})
             table = flagged.sort_values("date", ascending=False).rename(columns={
                 "date": "Ngày", "open": "Mở", "high": "Cao", "low": "Thấp", "close": "Đóng",
                 "volume": "Khối lượng", "previous_close": "Đóng phiên trước",
@@ -353,6 +367,86 @@ def show_daily_price_review(bars: pd.DataFrame, symbol: str, exchange: str, star
             })
             table["Ngày"] = table["Ngày"].dt.strftime("%d/%m/%Y")
             st.dataframe(table, use_container_width=True, hide_index=True)
+    return records
+
+
+UPCOM_NEW_SECURITIES_URL = "https://hnx.vn/vi-vn/co-phieu-etfs/chung-khoan-uc-moi.html"
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def recent_upcom_entries() -> list[dict]:
+    """Read the HNX list of recent UPCoM registrations with first trading dates."""
+    from cophieu68_import import _key
+
+    response = requests.get(UPCOM_NEW_SECURITIES_URL, headers={"User-Agent": "Mozilla/5.0"}, timeout=5)
+    response.raise_for_status()
+    for table in pd.read_html(StringIO(response.text)):
+        columns = {_key(column): column for column in table.columns}
+        date_column = next((column for key, column in columns.items() if key.startswith("ngay gd dau tien")), None)
+        if "ma ck" not in columns or date_column is None:
+            continue
+        codes = table[columns["ma ck"]].astype(str).str.strip().str.upper()
+        dates = pd.to_datetime(table[date_column].astype(str).str.strip(), format="%d/%m/%Y", errors="coerce")
+        if not dates.notna().any():
+            continue
+        return [
+            {"Ngày": day, "Mã": code, "Sàn": "UPCoM", "Trạng thái": "Đã xác minh",
+             "Lý do": "Ngày giao dịch đầu tiên trên UPCoM theo HNX",
+             "Hệ thống xử lý": "", "Nguồn": UPCOM_NEW_SECURITIES_URL}
+            for code, day in zip(codes, dates)
+            if pd.notna(day) and code.isalnum() and 3 <= len(code) <= 6 and code != "VNE"
+        ]
+    raise ValueError("Không đọc được danh sách đăng ký giao dịch mới của HNX")
+
+
+def show_data_change_log(records: list[dict], selected: str, stats: dict | None, result=None) -> None:
+    st.subheader("Nhật ký dữ liệu")
+    raw_updated = (stats or {}).get("updated_at_utc")
+    updated = pd.to_datetime(raw_updated, utc=True, errors="coerce")
+    if pd.notna(updated):
+        local = updated.tz_convert("Asia/Ho_Chi_Minh")
+        st.caption(f"Bản quét thị trường cập nhật lúc {local:%H:%M %d/%m/%Y} giờ Việt Nam.")
+    else:
+        st.caption("Bản quét thị trường chưa có giờ cập nhật xác nhận.")
+    st.caption(f"Cảnh báo OHLCV trong bảng theo mã đang mở ở Biểu đồ kỹ thuật ({selected}).")
+    if records:
+        st.warning(f"{selected} có {len(records)} mục cần kiểm tra.")
+    rows = [
+        {"Ngày": pd.Timestamp("2026-07-02"), "Mã": "ACV", "Sàn": "UPCoM",
+         "Trạng thái": "Đã sửa", "Lý do": "Cophieu68 gắn dữ liệu 06/02 vào 02/07",
+         "Hệ thống xử lý": "24/11/2026 · Sửa OHLCV khi nạp. Giá đóng 52.900 → 43.700 đồng",
+         "Nguồn": "https://web.stockbiz.vn/Stocks/ACV/LookupQuote.aspx?Date=02%2F07%2F2026"},
+        {"Ngày": pd.Timestamp("2026-07-13"), "Mã": "VNE", "Sàn": "HOSE → UPCoM",
+         "Trạng thái": "Đã xử lý", "Lý do": "Phiên đầu UPCoM sau phiên cuối HOSE 26/06",
+         "Hệ thống xử lý": "Đã loại nến từ nguồn Cophieu68 trong khoảng 29/06–12/07",
+         "Nguồn": "https://hnx.vn/vi-vn/cophieu-etfs/chi-tiet-chung-khoan-uc-VNE.html"},
+        *records,
+    ]
+    try:
+        entries = recent_upcom_entries()
+        if result is not None and {"Mã", "Sàn", "Ngày dữ liệu"} <= set(result.columns):
+            upcom = result[result["Sàn"].astype(str).str.upper().eq("UPCOM")]
+            scanned_days = pd.to_datetime(upcom["Ngày dữ liệu"], errors="coerce").groupby(upcom["Mã"]).max()
+            for row in entries:
+                last_scanned = scanned_days.get(row["Mã"])
+                if pd.notna(last_scanned) and last_scanned >= row["Ngày"]:
+                    row = {**row, "Hệ thống xử lý": f"Bản quét đã có dữ liệu đến {last_scanned:%d/%m/%Y}"}
+                else:
+                    row = {**row, "Hệ thống xử lý": "Chưa thấy dữ liệu từ ngày lên UPCoM trong bản quét"}
+                rows.append(row)
+        else:
+            rows.extend(entries)
+    except (requests.RequestException, ValueError, ImportError):
+        st.info("Chưa tải được danh sách đăng ký giao dịch mới từ HNX.")
+    st.caption("Đã xác minh = sàn đã công bố. Ô ‘Hệ thống xử lý’ trống khi bảng chỉ ghi nhận sự kiện.")
+    statuses = st.multiselect("Trạng thái", ["Cần kiểm tra", "Đã sửa", "Đã xử lý", "Đã xác minh"],
+                             key="stocklab_change_status")
+    data = pd.DataFrame(rows).drop_duplicates(["Ngày", "Mã", "Trạng thái"]).sort_values("Ngày", ascending=False)
+    if statuses:
+        data = data[data["Trạng thái"].isin(statuses)]
+    data["Ngày"] = data["Ngày"].dt.strftime("%d/%m/%Y")
+    st.dataframe(data, use_container_width=True, hide_index=True,
+                 column_config={"Nguồn": st.column_config.LinkColumn("Nguồn", display_text="Mở nguồn")})
 
 
 def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
@@ -548,6 +642,7 @@ def render_stock_dashboard():
             st.session_state["vnstock_scan_source"] = "automatic"
             fetch_chart_quotes.clear()
             fetch_equity_rights_events.clear()
+            recent_upcom_entries.clear()
             st.success(
                 f"Đã nạp dữ liệu quét tự động: {len(saved_result):,} mã có dữ liệu. "
                 "Không gọi Vnstock hàng loạt nên không tiêu hao hạn mức API."
@@ -571,6 +666,7 @@ def render_stock_dashboard():
     if result is None or result.empty:
         st.info("Chưa có bản quét tự động. Workflow GitHub Actions sẽ cập nhật theo lịch ngày giao dịch; mày cũng có thể nhấn nút cập nhật để quét thủ công.")
         from cophieu68_import import render_cophieu68_import
+        show_data_change_log([], "chưa chọn mã", stats)
         render_cophieu68_import()
         return
 
@@ -606,7 +702,9 @@ def render_stock_dashboard():
             with st.expander(f"Lỗi dữ liệu trong các lượt quét ({len(stats['errors'])})"):
                 st.write(stats["errors"][-50:])
 
-    tab_scan, tab_chart, tab_compare, tab_all = st.tabs(["🔎 Bộ lọc cổ phiếu", "📊 Biểu đồ kỹ thuật", "🕯️ So sánh 2 CP", "📋 Toàn bộ thị trường"])
+    tab_scan, tab_chart, tab_compare, tab_all, tab_log = st.tabs(
+        ["🔎 Bộ lọc cổ phiếu", "📊 Biểu đồ kỹ thuật", "🕯️ So sánh 2 CP", "📋 Toàn bộ thị trường", "Nhật ký dữ liệu"]
+    )
     with tab_scan:
         mom_tab, roc_tab, signals_tab = st.tabs(["MOM10 ≥ ngưỡng", "ROC14 ≥ ngưỡng", "Tín hiệu mua bán"])
         with roc_tab:
@@ -685,6 +783,7 @@ def render_stock_dashboard():
         symbol for symbol in available_symbols if symbol.replace("-", "") not in index_codes
     )]
 
+    review_records = []
     default_chart_symbol = "VN-Index"
     with tab_chart:
         selected_symbols = st.multiselect(
@@ -743,7 +842,7 @@ def render_stock_dashboard():
                 if raw_chart.attrs.get("corrected_acv_2026_07_02") and start <= "2026-07-02":
                     st.caption("ACV 02/07/2026 đã đối chiếu StockBiz và sửa OHLCV bị gắn nhầm ngày.")
                 if not exchanges.empty:
-                    show_daily_price_review(clean_chart, ticker, str(exchanges.iloc[0]).upper(), start)
+                    review_records = show_daily_price_review(clean_chart, ticker, str(exchanges.iloc[0]).upper(), start)
             chart = chart_with_warmed_ema100(clean_chart, timeframe, start)
             chart = chart.dropna(subset=["date", "open", "high", "low", "close"])
             if chart.empty:
@@ -878,3 +977,5 @@ def render_stock_dashboard():
         from cophieu68_import import render_cophieu68_import
         render_cophieu68_import()
 
+    with tab_log:
+        show_data_change_log(review_records, selected, stats, result)
