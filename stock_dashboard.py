@@ -1,7 +1,8 @@
 """Vietnam stock scanner and technical charts."""
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 from io import StringIO
 import os
 import pandas as pd
@@ -14,6 +15,28 @@ VNSTOCK_SOURCE_KEYS = {"dnse": ("DNSE_API_KEY", "DNSE_API_SECRET"),
                        "tcbs": ("TCBS_API_KEY",)}
 COMPARE_INDICES = {"VN-Index": "VNINDEX", "VN30": "VN30"}
 LONG_HISTORY_DAYS = (5 * 365, 10 * 365, 20 * 365, 30 * 365)
+# HOSE's 2026 calendar and supplemental November holiday announcement.
+MARKET_HOLIDAYS = {
+    pd.Timestamp(2026, 1, 1), pd.Timestamp(2026, 1, 2),
+    *pd.date_range("2026-02-16", "2026-02-20"),
+    pd.Timestamp(2026, 4, 27), pd.Timestamp(2026, 4, 30), pd.Timestamp(2026, 5, 1),
+    *pd.date_range("2026-08-31", "2026-09-02"),
+    pd.Timestamp(2026, 11, 24),
+}
+
+
+def vietnam_market_date() -> date:
+    return datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")).date()
+
+
+def drop_market_holiday_bars(bars: pd.DataFrame) -> pd.DataFrame:
+    dates = pd.to_datetime(bars["date"], errors="coerce").dt.normalize()
+    return bars.loc[~dates.isin(MARKET_HOLIDAYS)].copy()
+
+
+def show_market_holiday(today: date) -> None:
+    if pd.Timestamp(today) in MARKET_HOLIDAYS:
+        st.info(f"Thị trường nghỉ giao dịch ngày {today:%d/%m/%Y}. Biểu đồ dùng dữ liệu đến phiên hợp lệ gần nhất.")
 
 
 def history_label(days: int) -> str:
@@ -174,7 +197,7 @@ def fetch_index_chart_quotes(symbol: str, start_date: str, end_date: str) -> tup
 
 def sanitize_daily_chart_bars(df: pd.DataFrame) -> tuple[pd.DataFrame, str | None]:
     """Normalize trading dates and omit a suspicious latest one-lot flat candle."""
-    out = df.copy()
+    out = drop_market_holiday_bars(df)
     out["date"] = pd.to_datetime(out["date"], errors="coerce").dt.normalize()
     out = out.dropna(subset=["date", "open", "high", "low", "close", "volume"])
     out = out.sort_values("date").drop_duplicates("date", keep="last").reset_index(drop=True)
@@ -556,7 +579,8 @@ def render_stock_dashboard():
         selected = chart_symbols[0] if chart_symbols else default_chart_symbol
         st.caption("Biểu đồ hiển thị mã đầu tiên. Bảng đối chiếu bên dưới dùng dữ liệu quét cổ phiếu.")
         try:
-            today = date.today()
+            today = vietnam_market_date()
+            show_market_holiday(today)
             start = (today - timedelta(days=chart_days)).isoformat()
             end = today.isoformat()
             # Short display ranges reuse the same EMA100 calculation history.
@@ -571,7 +595,7 @@ def render_stock_dashboard():
             except MarketDataError:
                 raw_chart, chart_source = chart_fetch(ticker, start, end)
             if selected in COMPARE_INDICES:
-                clean_chart, chart_warning = raw_chart, None
+                clean_chart, chart_warning = drop_market_holiday_bars(raw_chart), None
             else:
                 clean_chart, chart_warning = sanitize_daily_chart_bars(raw_chart)
             st.caption(f"Nguồn dữ liệu biểu đồ: {chart_source}.")
@@ -651,14 +675,17 @@ def render_stock_dashboard():
             st.warning("Mỗi mã phải có 3–6 ký tự chữ hoặc số.")
         else:
             try:
-                start_date = (date.today() - timedelta(days=compare_days)).isoformat()
-                end_date = date.today().isoformat()
+                today = vietnam_market_date()
+                show_market_holiday(today)
+                start_date = (today - timedelta(days=compare_days)).isoformat()
+                end_date = today.isoformat()
                 charts = []
                 sources = []
                 from stock_compare import aggregate_candles, render_stock_comparison
                 for ticker in (ticker_a, ticker_b):
                     if ticker in COMPARE_INDICES:
                         clean, source = fetch_index_chart_quotes(COMPARE_INDICES[ticker], start_date, end_date)
+                        clean = drop_market_holiday_bars(clean)
                         warning = None
                     else:
                         raw, source = fetch_chart_quotes(ticker, start_date, end_date, interval="1D")
