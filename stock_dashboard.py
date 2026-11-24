@@ -262,35 +262,53 @@ def fetch_equity_rights_events(symbol: str) -> dict[pd.Timestamp, str]:
     raise ValueError("Không tìm thấy bảng lịch quyền")
 
 
-def daily_price_band_flags(bars: pd.DataFrame, exchange: str) -> pd.DataFrame:
-    """Flag equity bars for review when official daily reference data is unavailable."""
-    band = DAILY_PRICE_BANDS.get(exchange)
-    if band is None:
-        return pd.DataFrame()
+def missing_trading_sessions(dates: pd.Series, through: pd.Timestamp) -> tuple[pd.Series, int]:
+    """Count weekdays absent from the feed, excluding known exchange holidays."""
+    weekdays = pd.bdate_range(dates.iloc[0], max(through, dates.iloc[-1]))
+    sessions = weekdays.difference(pd.DatetimeIndex(MARKET_HOLIDAYS))
+    before = pd.Series(sessions.searchsorted(dates, side="left"), index=dates.index)
+    after = pd.Series(sessions.searchsorted(dates, side="right"), index=dates.index)
+    return (before - after.shift()).fillna(0).clip(lower=0).astype(int), len(sessions) - int(after.iloc[-1])
+
+
+def daily_price_band_flags(bars: pd.DataFrame, exchange: str, symbol: str = "") -> pd.DataFrame:
+    """Flag price jumps and gaps without using the current exchange for known transfers."""
+    if bars.empty or exchange not in DAILY_PRICE_BANDS:
+        return pd.DataFrame(columns=["date"])
+    dates = bars["date"]
+    session_exchange = pd.Series(exchange, index=bars.index)
+    transfer = pd.Series(False, index=bars.index)
+    if symbol == "VNE":
+        session_exchange.loc[dates.le(pd.Timestamp("2026-06-26"))] = "HOSE"
+        session_exchange.loc[dates.ge(pd.Timestamp("2026-07-13"))] = "UPCOM"
+        transfer = dates.eq(pd.Timestamp("2026-07-13"))
+    band = session_exchange.map(DAILY_PRICE_BANDS)
     previous_close = bars["close"].shift()
-    # UPCoM uses a weighted average of the prior session, not its closing price.
-    # The previous day's low/high provide conservative bounds for that average.
-    if exchange == "UPCOM":
-        reference_low, reference_high = bars["low"].shift(), bars["high"].shift()
-    else:
-        reference_low = reference_high = previous_close
+    is_upcom = session_exchange.eq("UPCOM")
+    reference_low = previous_close.where(~is_upcom, bars["low"].shift())
+    reference_high = previous_close.where(~is_upcom, bars["high"].shift())
     # Allow one price tick for rounding, using the chart's thousand-VND units.
     outside = (bars["high"] > reference_high * (1 + band) + 0.1) | (
         bars["low"] < reference_low * (1 - band) - 0.1
     )
-    fields = ["date", "open", "high", "low", "close", "volume"]
     close_change = bars["close"].div(previous_close.where(previous_close.gt(0))).sub(1)
     close_jump = close_change.abs().gt(band + 1e-10)
-    flagged = bars.loc[outside | close_jump, fields].copy()
+    missing, _ = missing_trading_sessions(dates, dates.iloc[-1])
+    gap = missing.ge(5)
+    fields = ["date", "open", "high", "low", "close", "volume"]
+    flagged = bars.loc[outside | close_jump | gap | transfer, fields].copy()
     if flagged.empty:
         return flagged
-    ohlcv = fields[1:]
-    repeated = bars[ohlcv].duplicated(keep=False) & bars["volume"].gt(0)
+    repeated = bars[fields[1:]].duplicated(keep=False) & bars["volume"].gt(0)
+    flagged["exchange"] = session_exchange
+    flagged["missing_sessions"] = missing
     flagged["previous_close"] = previous_close
     flagged["close_change_pct"] = (100 * close_change).round(2)
     flagged["reason"] = "Cao/thấp vượt biên độ ước tính"
     flagged.loc[close_jump.reindex(flagged.index), "reason"] = "Đóng cửa biến động quá ngưỡng so với phiên trước"
     flagged.loc[repeated.reindex(flagged.index), "reason"] += " · Trùng OHLCV với ngày khác"
+    flagged.loc[gap.reindex(flagged.index), "reason"] = "Có khoảng trống trước phiên này · Đối chiếu lịch giao dịch"
+    flagged.loc[transfer.reindex(flagged.index), "reason"] = "Phiên đầu UPCoM sau khi rời HOSE · Đối chiếu tham chiếu mới"
     return flagged
 
 
@@ -303,10 +321,16 @@ def show_daily_price_review(bars: pd.DataFrame, symbol: str, exchange: str, star
         st.caption("Nguồn biểu đồ chưa có giá tham chiếu chính thức. HOSE và HNX dùng giá đóng cửa phiên trước để rà soát. "
                    "UPCoM dùng khoảng thấp–cao phiên trước để bao giá bình quân gia quyền. "
                    "Với mã từng chuyển sàn, cần đối chiếu sàn tại ngày đang kiểm tra.")
-        flagged = daily_price_band_flags(bars, exchange)
+        if not bars.empty:
+            _, trailing_gap = missing_trading_sessions(bars["date"], pd.Timestamp(vietnam_market_date()) - pd.Timedelta(days=1))
+            if trailing_gap >= 5:
+                last_date = bars["date"].iloc[-1]
+                st.warning(f"Dữ liệu dừng ở {last_date:%d/%m/%Y}. Có {trailing_gap} ngày làm việc chưa thấy nến. "
+                           "Kiểm tra thông báo hạn chế, tạm ngừng giao dịch hoặc tình trạng nguồn dữ liệu.")
+        flagged = daily_price_band_flags(bars, exchange, symbol)
         flagged = flagged[flagged["date"] >= pd.Timestamp(start)]
         if flagged.empty:
-            st.caption("Không thấy nến vượt biên độ ước tính trong khoảng đang xem.")
+            st.caption("Không thấy nến vượt biên độ ước tính hoặc khoảng trống từ 5 ngày làm việc trong khoảng đang xem.")
         else:
             try:
                 rights = fetch_equity_rights_events(symbol)
@@ -314,6 +338,10 @@ def show_daily_price_review(bars: pd.DataFrame, symbol: str, exchange: str, star
             except (requests.RequestException, ValueError, ImportError):
                 flagged["rights"] = "Chưa tra được lịch quyền"
             st.markdown(f"[Lịch quyền Cophieu68 của {symbol}](https://cophieu68.vn/quote/event.php?id={symbol.lower()})")
+            if symbol == "VNE":
+                st.markdown("[HNX xác nhận phiên VNE lên UPCoM ngày 13/07/2026](https://hnx.vn/vi-vn/cophieu-etfs/chi-tiet-chung-khoan-uc-VNE.html)")
+            st.caption("Phiên đầu hoặc phiên giao dịch lại đủ điều kiện có thể áp dụng biên độ đặc biệt. "
+                       "Đối chiếu công bố của sàn về giá tham chiếu và biên độ của phiên đó.")
             st.caption("Có sự kiện: đối chiếu công bố của sàn/VSDC và giá tham chiếu sau điều chỉnh. "
                        "Chưa thấy sự kiện: đối chiếu OHLCV với nguồn khác, kiểm tra chuyển sàn hoặc giao dịch trở lại. "
                        "App giữ dữ liệu gốc cho đến khi xác minh được cách sửa.")
@@ -321,6 +349,7 @@ def show_daily_price_review(bars: pd.DataFrame, symbol: str, exchange: str, star
                 "date": "Ngày", "open": "Mở", "high": "Cao", "low": "Thấp", "close": "Đóng",
                 "volume": "Khối lượng", "previous_close": "Đóng phiên trước",
                 "close_change_pct": "% so đóng cửa trước", "reason": "Lý do rà soát", "rights": "Sự kiện đúng ngày",
+                "exchange": "Sàn dùng để rà soát", "missing_sessions": "Ngày làm việc thiếu nến",
             })
             table["Ngày"] = table["Ngày"].dt.strftime("%d/%m/%Y")
             st.dataframe(table, use_container_width=True, hide_index=True)
