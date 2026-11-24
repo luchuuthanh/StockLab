@@ -144,7 +144,7 @@ def signal_set_four_events(bars, stochastic, *, after="", trade="", ready=False,
 
 
 def early_trade_markers(chart, stochastic, set_four_events):
-    """Wait for a Set 4 entry after an eligible early buy crossing."""
+    """Confirm eligible early entries or carry a Set 4 buy to the next candle."""
     set_four_entries = {
         event["time"]: event["text"] for event in set_four_events
         if event["text"] in {"Mua", "Mua giả", "Mua VM"}
@@ -167,11 +167,15 @@ def early_trade_markers(chart, stochastic, set_four_events):
     warned = False
     watching = False
     watch_crossed = False
+    previous_set_four_buy = False
     for day, buy, cross, below, bearish, ha_ok, distance, below_ceiling, direct in zip(
         chart["date"], buy_cross, sell_cross, below_both, fast.lt(slow), ha_confirmed, gap,
         below_buy_ceiling, direct_buy_at_70(stochastic),
     ):
         time = day.strftime("%Y-%m-%d")
+        confirmation = set_four_entries.get(time)
+        buy_from_previous_candle = previous_set_four_buy
+        previous_set_four_buy = confirmation == "Mua"
         in_watch_band = 5 <= distance <= 8.5
         if watching:
             watch_crossed = bearish and (watch_crossed or cross)
@@ -179,7 +183,7 @@ def early_trade_markers(chart, stochastic, set_four_events):
                 markers.append({"time": time, "position": "aboveBar", "color": "#f6c453",
                                 "shape": "circle", "size": 0, "text": "◆ Bán theo dõi"})
                 watching = False
-        elif buy and not direct and ha_ok and in_watch_band:
+        elif buy and not (direct or buy_from_previous_candle) and ha_ok and in_watch_band:
             markers.append({"time": time, "position": "belowBar", "color": "#f6c453",
                             "shape": "circle", "size": 0, "text": "◆ Mua theo dõi"})
             watching = True
@@ -206,7 +210,7 @@ def early_trade_markers(chart, stochastic, set_four_events):
             else:
                 warned = False
             continue
-        if direct:
+        if direct or buy_from_previous_candle:
             holding = "Mua"
             pending = False
             bearish_cross = False
@@ -237,7 +241,6 @@ def early_trade_markers(chart, stochastic, set_four_events):
                             "shape": "circle", "size": 0, "text": "Chờ mua"})
 
         if pending:
-            confirmation = set_four_entries.get(time)
             if confirmation == "Mua giả" and not pending_fake:
                 pending_fake = True
                 markers.append({"time": time, "position": "belowBar", "color": "#f6c453",
