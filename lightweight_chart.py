@@ -147,7 +147,7 @@ def early_trade_markers(chart, stochastic, set_four_events):
     ema100 = chart["EMA100"]
     gap = (100 * (ema100 - chart["close"]) / ema100).round(10)
     buy_cross = candle.gt(slow) & candle.shift().le(slow.shift())
-    below_buy_ceiling = candle.lt(70)
+    below_buy_ceiling = candle.lt(70) | candle.shift().lt(70)
     sell_cross = fast.lt(slow) & fast.shift().ge(slow.shift())
     below_both = candle.lt(fast) & candle.lt(slow)
     markers = []
