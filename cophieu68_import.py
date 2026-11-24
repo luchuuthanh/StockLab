@@ -164,6 +164,16 @@ def fetch_cophieu68_history(
     if not frames:
         raise ValueError("Không đọc được bảng lịch sử OHLCV từ Cophieu68")
     history = pd.concat(frames, ignore_index=True).drop_duplicates("date").sort_values("date")
+    if symbol == "ACV":
+        # Cophieu68 repeated the 06/02/2026 OHLCV on 02/07/2026.
+        # Replace only that exact record if the provider has not corrected it.
+        # https://web.stockbiz.vn/Stocks/ACV/LookupQuote.aspx?Date=02%2F07%2F2026
+        columns = ["open", "high", "low", "close", "volume"]
+        incorrect = [54.20, 54.80, 51.80, 52.90, 2807600]
+        mislabeled = history["date"].eq(pd.Timestamp("2026-07-02")) & history[columns].eq(incorrect).all(axis=1)
+        if mislabeled.any():
+            history.loc[mislabeled, columns] = [43.90, 44.10, 43.70, 43.70, 444400]
+            history.attrs["corrected_acv_2026_07_02"] = True
     if symbol == "VNE":
         # VNE's last HOSE session was 26/06/2026 and its first UPCoM
         # session was 13/07/2026. The feed can contain bars in this gap.
