@@ -30,13 +30,20 @@ def stochastic_trade_markers(stochastic: pd.DataFrame, dates, *, buy_threshold=2
     return markers
 
 
+def direct_buy_at_70(stochastic):
+    close = stochastic["EMA 3"]
+    slow = close.ewm(span=8, adjust=False).mean()
+    previous = close.shift()
+    return previous.lt(70) & close.ge(70) & previous.le(slow.shift()) & close.gt(slow)
+
+
 def stochastic_trade_events(stochastic, dates, *, after="", holding=False, ready_to_buy=False, buy_threshold=25):
     """Replay the chart's signal rules, optionally resuming a previous scan."""
     closes = stochastic["EMA 3"]
     red = stochastic["EMA 9"]
     markers = []
-    for day, previous, current, previous_red, current_red in zip(
-        dates, closes.shift(), closes, red.shift(), red,
+    for day, previous, current, previous_red, current_red, direct in zip(
+        dates, closes.shift(), closes, red.shift(), red, direct_buy_at_70(stochastic),
     ):
         signal_date = day.strftime("%Y-%m-%d")
         if signal_date <= after or pd.isna(current) or pd.isna(current_red):
@@ -50,9 +57,9 @@ def stochastic_trade_events(stochastic, dates, *, after="", holding=False, ready
                             "color": "#ff6068", "shape": "arrowDown", "text": "Bán"})
             holding = False
             ready_to_buy = current < buy_threshold
-        elif not holding and ready_to_buy and previous <= previous_red and current > current_red and current > previous:
+        elif not holding and (direct or (ready_to_buy and previous <= previous_red and current > current_red and current > previous)):
             markers.append({"time": signal_date, "position": "belowBar",
-                            "color": "#32d981", "shape": "arrowUp", "text": "Mua"})
+                            "color": "#32d981", "shape": "arrowUp", "text": "Mua", "direct70": bool(direct)})
             holding = True
             ready_to_buy = False
     return markers, ready_to_buy
@@ -122,7 +129,9 @@ def signal_set_four_events(bars, stochastic, *, after="", trade="", ready=False,
         if event is None:
             continue
         if event["text"] == "Mua":
-            if has_cloud and min(a, b) <= price <= max(a, b):
+            if event.get("direct70"):
+                trade = "normal"
+            elif has_cloud and min(a, b) <= price <= max(a, b):
                 trade = "pending"
             else:
                 trade = "fake" if day in rejected else "normal"
@@ -158,9 +167,9 @@ def early_trade_markers(chart, stochastic, set_four_events):
     warned = False
     watching = False
     watch_crossed = False
-    for day, buy, cross, below, bearish, ha_ok, distance, below_ceiling in zip(
+    for day, buy, cross, below, bearish, ha_ok, distance, below_ceiling, direct in zip(
         chart["date"], buy_cross, sell_cross, below_both, fast.lt(slow), ha_confirmed, gap,
-        below_buy_ceiling,
+        below_buy_ceiling, direct_buy_at_70(stochastic),
     ):
         time = day.strftime("%Y-%m-%d")
         in_watch_band = 5 <= distance <= 8.5
@@ -170,7 +179,7 @@ def early_trade_markers(chart, stochastic, set_four_events):
                 markers.append({"time": time, "position": "aboveBar", "color": "#f6c453",
                                 "shape": "circle", "size": 0, "text": "◆ Bán theo dõi"})
                 watching = False
-        elif buy and ha_ok and in_watch_band:
+        elif buy and not direct and ha_ok and in_watch_band:
             markers.append({"time": time, "position": "belowBar", "color": "#f6c453",
                             "shape": "circle", "size": 0, "text": "◆ Mua theo dõi"})
             watching = True
@@ -196,6 +205,14 @@ def early_trade_markers(chart, stochastic, set_four_events):
                 warned = True
             else:
                 warned = False
+            continue
+        if direct:
+            holding = "Mua"
+            pending = False
+            bearish_cross = False
+            warned = False
+            markers.append({"time": time, "position": "belowBar", "color": "#32d981",
+                            "shape": "arrowUp", "text": holding})
             continue
         if pending:
             bearish_cross = bearish and (bearish_cross or cross)
@@ -438,7 +455,7 @@ function classifyStochasticMarkers(markers,barsByDate){
     let fakeBuy=false;
     return markers.map(marker=>{
         const isBuy=marker.shape==='arrowUp';
-        if(isBuy)fakeBuy=isRejectedGreenHeikinAshi(barsByDate.get(marker.time));
+        if(isBuy)fakeBuy=!marker.direct70 && isRejectedGreenHeikinAshi(barsByDate.get(marker.time));
         const classified=fakeBuy?{...marker,text:isBuy?'Mua giả':'Bán giả'}:marker;
         if(!isBuy)fakeBuy=false;
         return classified;
