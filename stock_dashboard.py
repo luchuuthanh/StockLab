@@ -15,13 +15,17 @@ VNSTOCK_SOURCE_KEYS = {"dnse": ("DNSE_API_KEY", "DNSE_API_SECRET"),
                        "tcbs": ("TCBS_API_KEY",)}
 COMPARE_INDICES = {"VN-Index": "VNINDEX", "VN30": "VN30"}
 LONG_HISTORY_DAYS = (5 * 365, 10 * 365, 20 * 365, 30 * 365)
-# HOSE's 2026 calendar and supplemental November holiday announcement.
+# Add dates only after the exchanges confirm the equity trading schedule.
+MARKET_HOLIDAY_PERIODS = (
+    ("Tết Dương lịch", "2026-01-01", "2026-01-02"),
+    ("Tết Nguyên đán", "2026-02-16", "2026-02-20"),
+    ("Giỗ Tổ Hùng Vương", "2026-04-27", "2026-04-27"),
+    ("30/4 và Quốc tế Lao động", "2026-04-30", "2026-05-01"),
+    ("Quốc khánh", "2026-08-31", "2026-09-02"),
+    ("Ngày Văn hóa Việt Nam", "2026-11-24", "2026-11-24"),
+)
 MARKET_HOLIDAYS = {
-    pd.Timestamp(2026, 1, 1), pd.Timestamp(2026, 1, 2),
-    *pd.date_range("2026-02-16", "2026-02-20"),
-    pd.Timestamp(2026, 4, 27), pd.Timestamp(2026, 4, 30), pd.Timestamp(2026, 5, 1),
-    *pd.date_range("2026-08-31", "2026-09-02"),
-    pd.Timestamp(2026, 11, 24),
+    day for _, start, end in MARKET_HOLIDAY_PERIODS for day in pd.date_range(start, end)
 }
 
 
@@ -35,8 +39,17 @@ def drop_market_holiday_bars(bars: pd.DataFrame) -> pd.DataFrame:
 
 
 def show_market_holiday(today: date) -> None:
-    if pd.Timestamp(today) in MARKET_HOLIDAYS:
-        st.info(f"Thị trường nghỉ giao dịch ngày {today:%d/%m/%Y}. Biểu đồ dùng dữ liệu đến phiên hợp lệ gần nhất.")
+    for name, first_day, last_day in MARKET_HOLIDAY_PERIODS:
+        first, last = date.fromisoformat(first_day), date.fromisoformat(last_day)
+        if not first - timedelta(days=2) <= today <= last:
+            continue
+        reopening = last + timedelta(days=1)
+        while reopening.weekday() >= 5 or pd.Timestamp(reopening) in MARKET_HOLIDAYS:
+            reopening += timedelta(days=1)
+        period = f"{first:%d/%m/%Y}" if first == last else f"{first:%d/%m/%Y}–{last:%d/%m/%Y}"
+        status = "Sắp nghỉ giao dịch" if today < first else "Thị trường nghỉ giao dịch"
+        st.info(f"{status} dịp {name} ({period}). Giao dịch trở lại ngày {reopening:%d/%m/%Y}. "
+                "Biểu đồ và tín hiệu vẫn xem được đến phiên có dữ liệu hợp lệ gần nhất.")
 
 
 def history_label(days: int) -> str:
@@ -369,6 +382,7 @@ def filter_signal_columns(table: pd.DataFrame, key: str) -> pd.DataFrame:
 
 def render_stock_dashboard():
     st.header("📈 STOCKLAB VIỆT NAM")
+    show_market_holiday(vietnam_market_date())
     st.caption("Bảng giá · Bộ lọc cổ phiếu · Biểu đồ nến · EMA · RSI · MACD · Khối lượng")
 
     st.caption("Nguồn dữ liệu: Cophieu68 cho bảng quét và biểu đồ cổ phiếu ngày. Biểu đồ chỉ số ưu tiên nguồn công khai.")
@@ -580,7 +594,6 @@ def render_stock_dashboard():
         st.caption("Biểu đồ hiển thị mã đầu tiên. Bảng đối chiếu bên dưới dùng dữ liệu quét cổ phiếu.")
         try:
             today = vietnam_market_date()
-            show_market_holiday(today)
             start = (today - timedelta(days=chart_days)).isoformat()
             end = today.isoformat()
             # Short display ranges reuse the same EMA100 calculation history.
@@ -676,7 +689,6 @@ def render_stock_dashboard():
         else:
             try:
                 today = vietnam_market_date()
-                show_market_holiday(today)
                 start_date = (today - timedelta(days=compare_days)).isoformat()
                 end_date = today.isoformat()
                 charts = []
