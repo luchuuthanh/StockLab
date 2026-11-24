@@ -10,6 +10,7 @@ import requests
 import streamlit as st
 
 EXCHANGES = {"HOSE", "HNX", "UPCOM"}
+DAILY_PRICE_BANDS = {"HOSE": 0.07, "HNX": 0.10, "UPCOM": 0.15}
 VNSTOCK_SOURCE_KEYS = {"dnse": ("DNSE_API_KEY", "DNSE_API_SECRET"),
                        "fhsc": ("FHSC_API_KEY",), "ssi": ("SSI_API_KEY", "SSI_API_SECRET"),
                        "tcbs": ("TCBS_API_KEY",)}
@@ -123,6 +124,7 @@ def fetch_chart_quotes(symbol: str, start_date: str, end_date: str, interval: st
             history = history[(history["date"] >= start) & (history["date"] <= end)]
             normalized = _normalize_quotes(history)
             if len(normalized) >= 20:
+                normalized.attrs.update(history.attrs)
                 return normalized, "Cophieu68 · dữ liệu ngày"
         except Exception as exc:
             cp68_error = str(exc)
@@ -231,6 +233,60 @@ def sanitize_daily_chart_bars(df: pd.DataFrame) -> tuple[pd.DataFrame, str | Non
             "Phiên này vẫn cần đối chiếu lại với nguồn dữ liệu."
         )
     return out, None
+
+
+def daily_price_band_flags(bars: pd.DataFrame, exchange: str) -> pd.DataFrame:
+    """Flag equity bars for review when official daily reference data is unavailable."""
+    band = DAILY_PRICE_BANDS.get(exchange)
+    if band is None:
+        return pd.DataFrame()
+    previous_close = bars["close"].shift()
+    # UPCoM uses a weighted average of the prior session, not its closing price.
+    # The previous day's low/high provide conservative bounds for that average.
+    if exchange == "UPCOM":
+        reference_low, reference_high = bars["low"].shift(), bars["high"].shift()
+    else:
+        reference_low = reference_high = previous_close
+    # Allow one price tick for rounding, using the chart's thousand-VND units.
+    outside = (bars["high"] > reference_high * (1 + band) + 0.1) | (
+        bars["low"] < reference_low * (1 - band) - 0.1
+    )
+    fields = ["date", "open", "high", "low", "close", "volume"]
+    flagged = bars.loc[outside, fields].copy()
+    if flagged.empty:
+        return flagged
+    ohlcv = fields[1:]
+    repeated = bars[ohlcv].duplicated(keep=False) & bars["volume"].gt(0)
+    flagged["close_change_pct"] = (100 * (bars["close"] / previous_close - 1)).round(2)
+    flagged["reason"] = repeated.loc[flagged.index].map({
+        True: "Ngoài biên độ ước tính, trùng OHLCV với ngày khác",
+        False: "Ngoài biên độ ước tính",
+    })
+    return flagged
+
+
+def show_daily_price_review(bars: pd.DataFrame, exchange: str, start: str) -> None:
+    band = DAILY_PRICE_BANDS.get(exchange)
+    if band is None:
+        return
+    with st.expander(f"Kiểm tra nến ngày · {exchange} ±{band:.0%}"):
+        st.caption("HOSE ±7% · HNX ±10% · UPCoM ±15% so với giá tham chiếu.")
+        st.caption("Nguồn biểu đồ chưa có giá tham chiếu chính thức. HOSE và HNX dùng giá đóng cửa phiên trước để rà soát. "
+                   "UPCoM dùng khoảng thấp–cao phiên trước để bao giá bình quân gia quyền. "
+                   "Với mã từng chuyển sàn, cần đối chiếu sàn tại ngày đang kiểm tra.")
+        flagged = daily_price_band_flags(bars, exchange)
+        flagged = flagged[flagged["date"] >= pd.Timestamp(start)]
+        if flagged.empty:
+            st.caption("Không thấy nến vượt biên độ ước tính trong khoảng đang xem.")
+        else:
+            st.caption("Đối chiếu giá trần, giá sàn và lịch sự kiện của sàn, nhất là ngày giao dịch đầu tiên, "
+                       "chuyển sàn, giao dịch trở lại hoặc không hưởng quyền. Chỉ sửa khi xác nhận sai dữ liệu.")
+            table = flagged.sort_values("date", ascending=False).rename(columns={
+                "date": "Ngày", "open": "Mở", "high": "Cao", "low": "Thấp", "close": "Đóng",
+                "volume": "Khối lượng", "close_change_pct": "% so đóng cửa trước", "reason": "Lý do rà soát",
+            })
+            table["Ngày"] = table["Ngày"].dt.strftime("%d/%m/%Y")
+            st.dataframe(table, use_container_width=True, hide_index=True)
 
 
 def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
@@ -424,6 +480,7 @@ def render_stock_dashboard():
             st.session_state["vnstock_scan_all"] = saved_result
             st.session_state["vnstock_scan_stats"] = saved_stats
             st.session_state["vnstock_scan_source"] = "automatic"
+            fetch_chart_quotes.clear()
             st.success(
                 f"Đã nạp dữ liệu quét tự động: {len(saved_result):,} mã có dữ liệu. "
                 "Không gọi Vnstock hàng loạt nên không tiêu hao hạn mức API."
@@ -614,6 +671,12 @@ def render_stock_dashboard():
             st.caption(f"Nguồn dữ liệu biểu đồ: {chart_source}.")
             if chart_warning:
                 st.warning(chart_warning)
+            if selected not in COMPARE_INDICES:
+                exchanges = result.loc[result["Mã"].astype(str).str.upper().eq(ticker), "Sàn"]
+                if raw_chart.attrs.get("corrected_acv_2026_07_02") and start <= "2026-07-02":
+                    st.caption("ACV 02/07/2026 đã đối chiếu StockBiz và sửa OHLCV bị gắn nhầm ngày.")
+                if not exchanges.empty:
+                    show_daily_price_review(clean_chart, str(exchanges.iloc[0]).upper(), start)
             chart = chart_with_warmed_ema100(clean_chart, timeframe, start)
             chart = chart.dropna(subset=["date", "open", "high", "low", "close"])
             if chart.empty:
