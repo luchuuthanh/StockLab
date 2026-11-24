@@ -235,6 +235,33 @@ def sanitize_daily_chart_bars(df: pd.DataFrame) -> tuple[pd.DataFrame, str | Non
     return out, None
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_equity_rights_events(symbol: str) -> dict[pd.Timestamp, str]:
+    """Read ex-rights dates, excluding record and payment dates in the same cell."""
+    from cophieu68_import import _key
+
+    response = requests.get(
+        "https://cophieu68.vn/quote/event.php", params={"id": symbol.lower()},
+        headers={"User-Agent": "Mozilla/5.0"}, timeout=8,
+    )
+    response.raise_for_status()
+    for table in pd.read_html(StringIO(response.text)):
+        columns = {_key(column): column for column in table.columns}
+        if not {"su kien", "ngay gdkhq"} <= columns.keys():
+            continue
+        dates = table[columns["ngay gdkhq"]].astype(str).str.extract(
+            r"^\s*(\d{2}/\d{2}/\d{4})", expand=False,
+        )
+        events = pd.DataFrame({
+            "date": pd.to_datetime(dates, format="%d/%m/%Y", errors="coerce"),
+            "event": table[columns["su kien"]].astype(str).str.strip(),
+        }).dropna(subset=["date"])
+        if events.empty and not table.empty:
+            raise ValueError("Không đọc được ngày giao dịch không hưởng quyền")
+        return events.groupby("date")["event"].agg(lambda names: " · ".join(dict.fromkeys(names))).to_dict()
+    raise ValueError("Không tìm thấy bảng lịch quyền")
+
+
 def daily_price_band_flags(bars: pd.DataFrame, exchange: str) -> pd.DataFrame:
     """Flag equity bars for review when official daily reference data is unavailable."""
     band = DAILY_PRICE_BANDS.get(exchange)
@@ -252,20 +279,22 @@ def daily_price_band_flags(bars: pd.DataFrame, exchange: str) -> pd.DataFrame:
         bars["low"] < reference_low * (1 - band) - 0.1
     )
     fields = ["date", "open", "high", "low", "close", "volume"]
-    flagged = bars.loc[outside, fields].copy()
+    close_change = bars["close"].div(previous_close.where(previous_close.gt(0))).sub(1)
+    close_jump = close_change.abs().gt(band + 1e-10)
+    flagged = bars.loc[outside | close_jump, fields].copy()
     if flagged.empty:
         return flagged
     ohlcv = fields[1:]
     repeated = bars[ohlcv].duplicated(keep=False) & bars["volume"].gt(0)
-    flagged["close_change_pct"] = (100 * (bars["close"] / previous_close - 1)).round(2)
-    flagged["reason"] = repeated.loc[flagged.index].map({
-        True: "Ngoài biên độ ước tính, trùng OHLCV với ngày khác",
-        False: "Ngoài biên độ ước tính",
-    })
+    flagged["previous_close"] = previous_close
+    flagged["close_change_pct"] = (100 * close_change).round(2)
+    flagged["reason"] = "Cao/thấp vượt biên độ ước tính"
+    flagged.loc[close_jump.reindex(flagged.index), "reason"] = "Đóng cửa biến động quá ngưỡng so với phiên trước"
+    flagged.loc[repeated.reindex(flagged.index), "reason"] += " · Trùng OHLCV với ngày khác"
     return flagged
 
 
-def show_daily_price_review(bars: pd.DataFrame, exchange: str, start: str) -> None:
+def show_daily_price_review(bars: pd.DataFrame, symbol: str, exchange: str, start: str) -> None:
     band = DAILY_PRICE_BANDS.get(exchange)
     if band is None:
         return
@@ -279,11 +308,19 @@ def show_daily_price_review(bars: pd.DataFrame, exchange: str, start: str) -> No
         if flagged.empty:
             st.caption("Không thấy nến vượt biên độ ước tính trong khoảng đang xem.")
         else:
-            st.caption("Đối chiếu giá trần, giá sàn và lịch sự kiện của sàn, nhất là ngày giao dịch đầu tiên, "
-                       "chuyển sàn, giao dịch trở lại hoặc không hưởng quyền. Chỉ sửa khi xác nhận sai dữ liệu.")
+            try:
+                rights = fetch_equity_rights_events(symbol)
+                flagged["rights"] = flagged["date"].map(rights).fillna("Chưa thấy sự kiện trong lịch nguồn")
+            except (requests.RequestException, ValueError, ImportError):
+                flagged["rights"] = "Chưa tra được lịch quyền"
+            st.markdown(f"[Lịch quyền Cophieu68 của {symbol}](https://cophieu68.vn/quote/event.php?id={symbol.lower()})")
+            st.caption("Có sự kiện: đối chiếu công bố của sàn/VSDC và giá tham chiếu sau điều chỉnh. "
+                       "Chưa thấy sự kiện: đối chiếu OHLCV với nguồn khác, kiểm tra chuyển sàn hoặc giao dịch trở lại. "
+                       "App giữ dữ liệu gốc cho đến khi xác minh được cách sửa.")
             table = flagged.sort_values("date", ascending=False).rename(columns={
                 "date": "Ngày", "open": "Mở", "high": "Cao", "low": "Thấp", "close": "Đóng",
-                "volume": "Khối lượng", "close_change_pct": "% so đóng cửa trước", "reason": "Lý do rà soát",
+                "volume": "Khối lượng", "previous_close": "Đóng phiên trước",
+                "close_change_pct": "% so đóng cửa trước", "reason": "Lý do rà soát", "rights": "Sự kiện đúng ngày",
             })
             table["Ngày"] = table["Ngày"].dt.strftime("%d/%m/%Y")
             st.dataframe(table, use_container_width=True, hide_index=True)
@@ -481,6 +518,7 @@ def render_stock_dashboard():
             st.session_state["vnstock_scan_stats"] = saved_stats
             st.session_state["vnstock_scan_source"] = "automatic"
             fetch_chart_quotes.clear()
+            fetch_equity_rights_events.clear()
             st.success(
                 f"Đã nạp dữ liệu quét tự động: {len(saved_result):,} mã có dữ liệu. "
                 "Không gọi Vnstock hàng loạt nên không tiêu hao hạn mức API."
@@ -676,7 +714,7 @@ def render_stock_dashboard():
                 if raw_chart.attrs.get("corrected_acv_2026_07_02") and start <= "2026-07-02":
                     st.caption("ACV 02/07/2026 đã đối chiếu StockBiz và sửa OHLCV bị gắn nhầm ngày.")
                 if not exchanges.empty:
-                    show_daily_price_review(clean_chart, str(exchanges.iloc[0]).upper(), start)
+                    show_daily_price_review(clean_chart, ticker, str(exchanges.iloc[0]).upper(), start)
             chart = chart_with_warmed_ema100(clean_chart, timeframe, start)
             chart = chart.dropna(subset=["date", "open", "high", "low", "close"])
             if chart.empty:
