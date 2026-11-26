@@ -578,7 +578,12 @@ function twoMonthsAfter(time){
     const lastDay=new Date(Date.UTC(year,month+2,0)).getUTCDate();
     return new Date(Date.UTC(year,month+1,Math.min(day,lastDay))).toISOString().slice(0,10);
 }
-function trackRsiResistance(points,peaks,minSpan,barIndex){
+function fortyFiveDaysAfter(time){
+    const day=new Date(time+'T00:00:00Z');
+    day.setUTCDate(day.getUTCDate()+45);
+    return day.toISOString().slice(0,10);
+}
+function trackRsiResistance(points,peaks,barIndex,{earliestEnd,searchOlderPeaks=false}){
     const epsilon=1e-8;
     const bar=points.map(point=>barIndex.get(point.time));
     const markers=[];
@@ -598,11 +603,11 @@ function trackRsiResistance(points,peaks,minSpan,barIndex){
         const second=peaks[nextPeak].index;
         for(let earlier=nextPeak-1;earlier>=0;earlier--){
             const first=peaks[earlier].index;
-            if(minSpan && points[second].time<twoMonthsAfter(points[first].time))continue;
+            if(points[second].time<earliestEnd(points[first].time))continue;
             const distance=bar[second]-bar[first];
             const slope=(points[second].value-points[first].value)/distance;
             if(slope>=0){
-                if(!minSpan)break;
+                if(!searchOlderPeaks)break;
                 continue;
             }
             const candidate={first,second,slope,breakAt:null};
@@ -611,7 +616,7 @@ function trackRsiResistance(points,peaks,minSpan,barIndex){
                 resistance=candidate;
                 break;
             }
-            if(!minSpan)break;
+            if(!searchOlderPeaks)break;
         }
         nextPeak++;
     }
@@ -634,8 +639,8 @@ function rsiBreakMarkers(shortTimes,longTimes){
 }
 const rsiPeaks=findRsiPeaks(data.rsi);
 const rsiBarIndex=new Map(data.candles.map(({time},index)=>[time,index]));
-const rsiShort=trackRsiResistance(data.rsi,rsiPeaks,false,rsiBarIndex);
-const rsiLong=trackRsiResistance(data.rsi,rsiPeaks,true,rsiBarIndex);
+const rsiShort=trackRsiResistance(data.rsi,rsiPeaks,rsiBarIndex,{earliestEnd:fortyFiveDaysAfter});
+const rsiLong=trackRsiResistance(data.rsi,rsiPeaks,rsiBarIndex,{earliestEnd:twoMonthsAfter,searchOlderPeaks:true});
 const rsiMarkers=rsiBreakMarkers(rsiShort.markers,rsiLong.markers);
 function createIndicatorPane(id, sectionId, titleId){
     const root=document.getElementById(id);
