@@ -554,6 +554,23 @@ tradeSet.addEventListener('change',renderTradeHistory);
 tradeType.addEventListener('change',renderTradeHistory);
 renderTradeHistory();
 const candleFocus=document.getElementById('candle-focus');
+function findRsiPeaks(points){
+    const peaks=[];
+    const neighbors=2;
+    for(let start=neighbors;start<points.length-neighbors;start++){
+        const value=points[start].value;
+        let end=start;
+        while(end+1<points.length && points[end+1].value===value)end++;
+        const before=points.slice(start-neighbors,start);
+        const after=points.slice(end+1,end+1+neighbors);
+        if(after.length===neighbors && [...before,...after].every(point=>point.value<value)){
+            peaks.push(points[end]);
+        }
+        start=end;
+    }
+    return peaks;
+}
+const rsiPeaks=findRsiPeaks(data.rsi);
 function createIndicatorPane(id, sectionId, titleId){
     const root=document.getElementById(id);
     const title=document.getElementById(titleId);
@@ -564,6 +581,9 @@ function createIndicatorPane(id, sectionId, titleId){
     const rsi70=osc.addLineSeries({color:'#f59e0b',lineWidth:1,lineStyle:2,priceLineVisible:false,lastValueVisible:false});
     rsi30.setData(data.rsi.map(p=>({time:p.time,value:30})));
     rsi70.setData(data.rsi.map(p=>({time:p.time,value:70})));
+    const rsiPeakLine=osc.addLineSeries({color:'#38d9ef',lineWidth:1,
+        priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});
+    rsiPeakLine.setData(rsiPeaks.length>=2?rsiPeaks:[]);
     const macd=osc.addLineSeries({color:'#36c6e9',lineWidth:2,priceLineVisible:false});macd.setData(data.macd);
     const signal=osc.addLineSeries({color:'#f8d05a',lineWidth:2,priceLineVisible:false});signal.setData(data.signal);
     const hist=osc.addHistogramSeries({color:'#5aa59c',priceLineVisible:false});hist.setData(data.hist);
@@ -585,7 +605,7 @@ function createIndicatorPane(id, sectionId, titleId){
     mom.setData(data.mom);
     const heikinAshi=osc.addCandlestickSeries({...candleStyle,priceLineVisible:false,visible:false});
     heikinAshi.setData(heikinAshiBars);
-    const modes={RSI:[rsi,rsi30,rsi70],MACD:[macd,signal,hist],MOM:[mom],
+    const modes={RSI:[rsi,rsi30,rsi70,rsiPeakLine],MACD:[macd,signal,hist],MOM:[mom],
         [stochasticMode]:[stochasticBars,...stochasticLines.map(([,series])=>series)],
         [heikinAshiMode]:[heikinAshi]};
     const candleFocusSeries=new Set([stochasticBars,...stochasticLines
