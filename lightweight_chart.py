@@ -554,6 +554,9 @@ tradeSet.addEventListener('change',renderTradeHistory);
 tradeType.addEventListener('change',renderTradeHistory);
 renderTradeHistory();
 const candleFocus=document.getElementById('candle-focus');
+const rsiShortColor='#38d9ef';
+const rsiLongColor='#f3ac55';
+
 function findRsiPeaks(points){
     const peaks=[];
     const neighbors=2;
@@ -564,13 +567,76 @@ function findRsiPeaks(points){
         const before=points.slice(start-neighbors,start);
         const after=points.slice(end+1,end+1+neighbors);
         if(after.length===neighbors && [...before,...after].every(point=>point.value<value)){
-            peaks.push(points[end]);
+            peaks.push({index:end,confirmedAt:end+neighbors});
         }
         start=end;
     }
     return peaks;
 }
+function twoMonthsAfter(time){
+    const [year,month,day]=time.split('-').map(Number);
+    const lastDay=new Date(Date.UTC(year,month+2,0)).getUTCDate();
+    return new Date(Date.UTC(year,month+1,Math.min(day,lastDay))).toISOString().slice(0,10);
+}
+function trackRsiResistance(points,peaks,minSpan,barIndex){
+    const epsilon=1e-8;
+    const bar=points.map(point=>barIndex.get(point.time));
+    const markers=[];
+    let nextPeak=0;
+    let resistance=null;
+    function priceAt(line,index){
+        return points[line.first].value+line.slope*(bar[index]-bar[line.first]);
+    }
+    for(let index=0;index<points.length;index++){
+        if(resistance && resistance.breakAt===null &&
+            points[index-1].value<=priceAt(resistance,index-1)+epsilon &&
+            points[index].value>priceAt(resistance,index)+epsilon){
+            resistance.breakAt=index;
+            markers.push(points[index].time);
+        }
+        if(nextPeak>=peaks.length || peaks[nextPeak].confirmedAt!==index)continue;
+        const second=peaks[nextPeak].index;
+        for(let earlier=nextPeak-1;earlier>=0;earlier--){
+            const first=peaks[earlier].index;
+            if(minSpan && points[second].time<twoMonthsAfter(points[first].time))continue;
+            const distance=bar[second]-bar[first];
+            const slope=(points[second].value-points[first].value)/distance;
+            if(slope>=0){
+                if(!minSpan)break;
+                continue;
+            }
+            const candidate={first,second,slope,breakAt:null};
+            if(points.slice(first+1,index+1).every(
+                (point,offset)=>point.value<=priceAt(candidate,first+1+offset)+epsilon)){
+                resistance=candidate;
+                break;
+            }
+            if(!minSpan)break;
+        }
+        nextPeak++;
+    }
+    if(!resistance)return {line:[],markers};
+    const end=resistance.breakAt??points.length-1;
+    const line=[points[resistance.first],points[resistance.second]];
+    if(end>resistance.second)line.push({time:points[end].time,value:priceAt(resistance,end)});
+    return {line,markers};
+}
+function rsiBreakMarkers(shortTimes,longTimes){
+    const shortSet=new Set(shortTimes);
+    const longSet=new Set(longTimes);
+    return [...new Set([...shortTimes,...longTimes])].sort().map(time=>{
+        const both=shortSet.has(time)&&longSet.has(time);
+        const long=longSet.has(time);
+        return {time,position:'aboveBar',shape:'arrowUp',
+            color:long?rsiLongColor:rsiShortColor,
+            text:both?'Break RSI cả hai':long?'Break RSI dài':'Break RSI ngắn'};
+    });
+}
 const rsiPeaks=findRsiPeaks(data.rsi);
+const rsiBarIndex=new Map(data.candles.map(({time},index)=>[time,index]));
+const rsiShort=trackRsiResistance(data.rsi,rsiPeaks,false,rsiBarIndex);
+const rsiLong=trackRsiResistance(data.rsi,rsiPeaks,true,rsiBarIndex);
+const rsiMarkers=rsiBreakMarkers(rsiShort.markers,rsiLong.markers);
 function createIndicatorPane(id, sectionId, titleId){
     const root=document.getElementById(id);
     const title=document.getElementById(titleId);
@@ -581,9 +647,12 @@ function createIndicatorPane(id, sectionId, titleId){
     const rsi70=osc.addLineSeries({color:'#f59e0b',lineWidth:1,lineStyle:2,priceLineVisible:false,lastValueVisible:false});
     rsi30.setData(data.rsi.map(p=>({time:p.time,value:30})));
     rsi70.setData(data.rsi.map(p=>({time:p.time,value:70})));
-    const rsiPeakLine=osc.addLineSeries({color:'#38d9ef',lineWidth:1,
-        priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});
-    rsiPeakLine.setData(rsiPeaks.length>=2?rsiPeaks:[]);
+    const resistanceStyle={lineWidth:1,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false};
+    const rsiShortLine=osc.addLineSeries({...resistanceStyle,color:rsiShortColor});
+    const rsiLongLine=osc.addLineSeries({...resistanceStyle,color:rsiLongColor,lineStyle:2});
+    rsiShortLine.setData(rsiShort.line);
+    rsiLongLine.setData(rsiLong.line);
+    rsi.setMarkers(rsiMarkers);
     const macd=osc.addLineSeries({color:'#36c6e9',lineWidth:2,priceLineVisible:false});macd.setData(data.macd);
     const signal=osc.addLineSeries({color:'#f8d05a',lineWidth:2,priceLineVisible:false});signal.setData(data.signal);
     const hist=osc.addHistogramSeries({color:'#5aa59c',priceLineVisible:false});hist.setData(data.hist);
@@ -605,7 +674,7 @@ function createIndicatorPane(id, sectionId, titleId){
     mom.setData(data.mom);
     const heikinAshi=osc.addCandlestickSeries({...candleStyle,priceLineVisible:false,visible:false});
     heikinAshi.setData(heikinAshiBars);
-    const modes={RSI:[rsi,rsi30,rsi70,rsiPeakLine],MACD:[macd,signal,hist],MOM:[mom],
+    const modes={RSI:[rsi,rsi30,rsi70,rsiShortLine,rsiLongLine],MACD:[macd,signal,hist],MOM:[mom],
         [stochasticMode]:[stochasticBars,...stochasticLines.map(([,series])=>series)],
         [heikinAshiMode]:[heikinAshi]};
     const candleFocusSeries=new Set([stochasticBars,...stochasticLines
