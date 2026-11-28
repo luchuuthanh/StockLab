@@ -25,10 +25,14 @@ jobs:
           path: cv02_f33_*.csv
       - run: |
           mkdir -p research/results
-          cp cv02_f33_*.csv research/results/
+          gzip -c cv02_f33_events.csv > research/results/cv02_f33_events.csv.gz
+          cp cv02_f33_holdout.csv research/results/
+          for f in cv02_f33_summary.csv cv02_f33_confusion.csv; do
+            if [ $(wc -c < "$f") -gt 50000000 ]; then gzip -c "$f" > "research/results/$f.gz"; else cp "$f" research/results/; fi
+          done
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add research/results/cv02_f33_*.csv
+          git add research/results/cv02_f33_*
           if ! git diff --cached --quiet; then
             git commit -m "Save early reversal results [skip ci]"
             git push origin HEAD:research/cv02-rsi-ema
