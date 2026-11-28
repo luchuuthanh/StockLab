@@ -44,20 +44,35 @@ def run(symbol):
     short,es=pk(r,45); long,el=pk(r,252)
     votes={n:np.sign(c-e[n]) for n in e}
     base=np.sign(r.rolling(120).apply(lambda x:np.polyfit(np.arange(len(x)),x,1)[0],raw=True).where(lambda x:x.abs()>.03,0))
+    # F: separate main trend, reversal watch and wave.
+    main=np.zeros(len(c)); watch=np.zeros(len(c)); confirm=np.zeros(len(c))
+    current=0
+    for i in range(3,len(c)):
+        direction=int(long.iloc[i])
+        if direction and direction!=current and (votes[100].iloc[i-3:i+1]==direction).all():
+            current=direction
+        main[i]=current
+        if current and votes[100].iloc[i]==-current: watch[i]=-current
+        elif direction and direction!=current: watch[i]=direction
+        confirm[i]=int(current!=0 and votes[200].iloc[i]==current)
+    main=pd.Series(main,index=d.index)
+    wave_f=np.select([(main==1)&((short==-1)|((votes[20]<0)&(votes[50]<0))),(main==-1)&((short==1)|((votes[20]>0)&(votes[50]>0))),main==1,main==-1],['T2','G2','T1','G1'],default='unknown')
     results=[]
     for family,rs in [('baseline',base),('PK',long)]:
         scores={'A':rs,'B':rs+votes[20]+votes[50],'C':rs+votes[100]+votes[200],'D':rs+sum(votes.values()),'E':rs+sum(votes.values())+sum(np.sign(e[n].diff(10)) for n in e)+np.sign(e[20]-e[50])+np.sign(e[50]-e[100])+np.sign(e[100]-e[200])}
+        if family=='PK': scores['F']=main
         for name,score in scores.items():
-            t={'A':1,'B':2,'C':2,'D':3,'E':7}[name]
+            t={'A':1,'B':2,'C':2,'D':3,'E':7,'F':1}[name]
             raw=pd.Series(np.select([score>=t,score<=-t],[1,-1],default=0),index=d.index)
             state=raw.copy()
-            if family=='PK':
+            if family=='PK' and name!='F':
                 for i in range(3,len(raw)):
                     state.iloc[i]=raw.iloc[i] if raw.iloc[i-3:i+1].eq(raw.iloc[i]).all() else state.iloc[i-1]
             wave=np.select([(state==1)&(short==-1),(state==-1)&(short==1),state==1,state==-1],['T2','G2','T1','G1'],default='L')
+            if name=='F': state=main; wave=wave_f
             dates=pd.to_datetime(d.date)
             valid=e[200].notna() & (dates>=end-pd.DateOffset(years=5))
-            pd.DataFrame(dict(date=dates,close=c,rsi=r,short=short,long=long,trend=state,wave=wave,break_short=es,break_long=el))[valid].to_csv(f'cv02_{symbol}_{family}_{name}.csv',index=False)
+            pd.DataFrame(dict(date=dates,close=c,rsi=r,short=short,long=long,trend=state,wave=wave,break_short=es,break_long=el,reversal_watch=watch if name=='F' else np.nan,ema200_confirm=confirm if name=='F' else np.nan))[valid].to_csv(f'cv02_{symbol}_{family}_{name}.csv',index=False)
             split=end-pd.DateOffset(years=2)
             for period,m in [('development',dates<split),('holdout',dates>=split)]:
                 for h in (5,10,20,30):
