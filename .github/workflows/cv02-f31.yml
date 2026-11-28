@@ -1,0 +1,35 @@
+name: CV02 F3.1
+on:
+  push:
+    branches: [research/cv02-rsi-ema]
+    paths:
+      - research/cv02_f31.py
+      - .github/workflows/cv02-f31.yml
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements.txt
+      - run: PYTHONPATH=.:research python research/cv02_f31.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cv02-f31-results
+          path: cv02_f31_*.csv
+      - run: |
+          mkdir -p research/results
+          cp cv02_f31_*.csv research/results/
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add research/results/cv02_f31_*.csv
+          if ! git diff --cached --quiet; then
+            git commit -m "Save early reversal results [skip ci]"
+            git push origin HEAD:research/cv02-rsi-ema
+          fi
